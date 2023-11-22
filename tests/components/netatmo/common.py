@@ -1,26 +1,16 @@
 """Common methods used across tests for Netatmo."""
+from contextlib import contextmanager
 import json
+from unittest.mock import patch
 
 from homeassistant.components.webhook import async_handle_webhook
 from homeassistant.util.aiohttp import MockRequest
 
 from tests.common import load_fixture
+from tests.test_util.aiohttp import AiohttpClientMockResponse
 
 CLIENT_ID = "1234"
 CLIENT_SECRET = "5678"
-ALL_SCOPES = [
-    "read_station",
-    "read_camera",
-    "access_camera",
-    "write_camera",
-    "read_presence",
-    "access_presence",
-    "write_presence",
-    "read_homecoach",
-    "read_smokedetector",
-    "read_thermostat",
-    "write_thermostat",
-]
 
 COMMON_RESPONSE = {
     "user_id": "91763b24c43d3e344f424e8d",
@@ -35,13 +25,19 @@ FAKE_WEBHOOK_ACTIVATION = {
     "push_type": "webhook_activation",
 }
 
+DEFAULT_PLATFORMS = ["camera", "climate", "light", "sensor"]
 
-def fake_post_request(**args):
+
+async def fake_post_request(*args, **kwargs):
     """Return fake data."""
-    if "url" not in args:
+    if "endpoint" not in kwargs:
         return "{}"
 
-    endpoint = args["url"].split("/")[-1]
+    endpoint = kwargs["endpoint"].split("/")[-1]
+
+    if endpoint in "snapshot_720.jpg":
+        return b"test stream image bytes"
+
     if endpoint in [
         "setpersonsaway",
         "setpersonshome",
@@ -50,12 +46,34 @@ def fake_post_request(**args):
         "setthermmode",
         "switchhomeschedule",
     ]:
-        return f'{{"{endpoint}": true}}'
+        payload = {f"{endpoint}": True, "status": "ok"}
 
-    return json.loads(load_fixture(f"netatmo/{endpoint}.json"))
+    elif endpoint == "homestatus":
+        home_id = kwargs.get("params", {}).get("home_id")
+        payload = json.loads(load_fixture(f"netatmo/{endpoint}_{home_id}.json"))
+
+    else:
+        payload = json.loads(load_fixture(f"netatmo/{endpoint}.json"))
+
+    return AiohttpClientMockResponse(
+        method="POST",
+        url=kwargs["endpoint"],
+        json=payload,
+    )
 
 
-def fake_post_request_no_data(**args):
+async def fake_get_image(*args, **kwargs):
+    """Return fake data."""
+    if "endpoint" not in kwargs:
+        return "{}"
+
+    endpoint = kwargs["endpoint"].split("/")[-1]
+
+    if endpoint in "snapshot_720.jpg":
+        return b"test stream image bytes"
+
+
+async def fake_post_request_no_data(*args, **kwargs):
     """Fake error during requesting backend data."""
     return "{}"
 
@@ -63,8 +81,22 @@ def fake_post_request_no_data(**args):
 async def simulate_webhook(hass, webhook_id, response):
     """Simulate a webhook event."""
     request = MockRequest(
+        method="POST",
         content=bytes(json.dumps({**COMMON_RESPONSE, **response}), "utf-8"),
         mock_source="test",
     )
     await async_handle_webhook(hass, webhook_id, request)
     await hass.async_block_till_done()
+
+
+@contextmanager
+def selected_platforms(platforms):
+    """Restrict loaded platforms to list given."""
+    with patch(
+        "homeassistant.components.netatmo.data_handler.PLATFORMS", platforms
+    ), patch(
+        "homeassistant.helpers.config_entry_oauth2_flow.async_get_config_entry_implementation",
+    ), patch(
+        "homeassistant.components.netatmo.webhook_generate_url"
+    ):
+        yield

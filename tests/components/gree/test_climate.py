@@ -5,8 +5,10 @@ from unittest.mock import DEFAULT as DEFAULT_MOCK, AsyncMock, patch
 from greeclimate.device import HorizontalSwing, VerticalSwing
 from greeclimate.exceptions import DeviceNotBoundError, DeviceTimeoutError
 import pytest
+from syrupy.assertion import SnapshotAssertion
 
-from homeassistant.components.climate.const import (
+from homeassistant.components.climate import (
+    ATTR_CURRENT_TEMPERATURE,
     ATTR_FAN_MODE,
     ATTR_HVAC_MODE,
     ATTR_PRESET_MODE,
@@ -16,12 +18,6 @@ from homeassistant.components.climate.const import (
     FAN_HIGH,
     FAN_LOW,
     FAN_MEDIUM,
-    HVAC_MODE_AUTO,
-    HVAC_MODE_COOL,
-    HVAC_MODE_DRY,
-    HVAC_MODE_FAN_ONLY,
-    HVAC_MODE_HEAT,
-    HVAC_MODE_OFF,
     PRESET_AWAY,
     PRESET_BOOST,
     PRESET_ECO,
@@ -36,32 +32,29 @@ from homeassistant.components.climate.const import (
     SWING_HORIZONTAL,
     SWING_OFF,
     SWING_VERTICAL,
+    HVACMode,
 )
 from homeassistant.components.gree.climate import (
     FAN_MODES_REVERSE,
+    HVAC_MODES,
     HVAC_MODES_REVERSE,
-    SUPPORTED_FEATURES,
 )
-from homeassistant.components.gree.const import (
-    DOMAIN as GREE_DOMAIN,
-    FAN_MEDIUM_HIGH,
-    FAN_MEDIUM_LOW,
-)
+from homeassistant.components.gree.const import FAN_MEDIUM_HIGH, FAN_MEDIUM_LOW
 from homeassistant.const import (
     ATTR_ENTITY_ID,
-    ATTR_FRIENDLY_NAME,
-    ATTR_SUPPORTED_FEATURES,
     ATTR_TEMPERATURE,
     SERVICE_TURN_OFF,
     SERVICE_TURN_ON,
     STATE_UNAVAILABLE,
+    UnitOfTemperature,
 )
-from homeassistant.setup import async_setup_component
+from homeassistant.core import HomeAssistant
+from homeassistant.helpers import entity_registry as er
 import homeassistant.util.dt as dt_util
 
-from .common import build_device_mock
+from .common import async_setup_gree, build_device_mock
 
-from tests.common import MockConfigEntry, async_fire_time_changed
+from tests.common import async_fire_time_changed
 
 ENTITY_ID = f"{DOMAIN}.fake_device_1"
 
@@ -72,14 +65,7 @@ def mock_now():
     return dt_util.utcnow()
 
 
-async def async_setup_gree(hass):
-    """Set up the gree platform."""
-    MockConfigEntry(domain=GREE_DOMAIN).add_to_hass(hass)
-    await async_setup_component(hass, GREE_DOMAIN, {GREE_DOMAIN: {"climate": {}}})
-    await hass.async_block_till_done()
-
-
-async def test_discovery_called_once(hass, discovery, device):
+async def test_discovery_called_once(hass: HomeAssistant, discovery, device) -> None:
     """Test discovery is only ever called once."""
     await async_setup_gree(hass)
     assert discovery.call_count == 1
@@ -88,7 +74,7 @@ async def test_discovery_called_once(hass, discovery, device):
     assert discovery.call_count == 1
 
 
-async def test_discovery_setup(hass, discovery, device):
+async def test_discovery_setup(hass: HomeAssistant, discovery, device) -> None:
     """Test setup of platform."""
     MockDevice1 = build_device_mock(
         name="fake-device-1", ipAddress="1.1.1.1", mac="aabbcc112233"
@@ -106,7 +92,9 @@ async def test_discovery_setup(hass, discovery, device):
     assert len(hass.states.async_all(DOMAIN)) == 2
 
 
-async def test_discovery_setup_connection_error(hass, discovery, device, mock_now):
+async def test_discovery_setup_connection_error(
+    hass: HomeAssistant, discovery, device, mock_now
+) -> None:
     """Test gree integration is setup."""
     MockDevice1 = build_device_mock(
         name="fake-device-1", ipAddress="1.1.1.1", mac="aabbcc112233"
@@ -126,7 +114,9 @@ async def test_discovery_setup_connection_error(hass, discovery, device, mock_no
     assert state.state == STATE_UNAVAILABLE
 
 
-async def test_discovery_after_setup(hass, discovery, device, mock_now):
+async def test_discovery_after_setup(
+    hass: HomeAssistant, discovery, device, mock_now
+) -> None:
     """Test gree devices don't change after multiple discoveries."""
     MockDevice1 = build_device_mock(
         name="fake-device-1", ipAddress="1.1.1.1", mac="aabbcc112233"
@@ -160,7 +150,9 @@ async def test_discovery_after_setup(hass, discovery, device, mock_now):
     assert len(hass.states.async_all(DOMAIN)) == 2
 
 
-async def test_discovery_add_device_after_setup(hass, discovery, device, mock_now):
+async def test_discovery_add_device_after_setup(
+    hass: HomeAssistant, discovery, device, mock_now
+) -> None:
     """Test gree devices can be added after initial setup."""
     MockDevice1 = build_device_mock(
         name="fake-device-1", ipAddress="1.1.1.1", mac="aabbcc112233"
@@ -194,7 +186,9 @@ async def test_discovery_add_device_after_setup(hass, discovery, device, mock_no
     assert len(hass.states.async_all(DOMAIN)) == 2
 
 
-async def test_discovery_device_bind_after_setup(hass, discovery, device, mock_now):
+async def test_discovery_device_bind_after_setup(
+    hass: HomeAssistant, discovery, device, mock_now
+) -> None:
     """Test gree devices can be added after a late device bind."""
     MockDevice1 = build_device_mock(
         name="fake-device-1", ipAddress="1.1.1.1", mac="aabbcc112233"
@@ -226,7 +220,7 @@ async def test_discovery_device_bind_after_setup(hass, discovery, device, mock_n
     assert state.state != STATE_UNAVAILABLE
 
 
-async def test_update_connection_failure(hass, device, mock_now):
+async def test_update_connection_failure(hass: HomeAssistant, device, mock_now) -> None:
     """Testing update hvac connection failure exception."""
     device().update_state.side_effect = [
         DEFAULT_MOCK,
@@ -262,7 +256,9 @@ async def test_update_connection_failure(hass, device, mock_now):
     assert state.state == STATE_UNAVAILABLE
 
 
-async def test_update_connection_failure_recovery(hass, discovery, device, mock_now):
+async def test_update_connection_failure_recovery(
+    hass: HomeAssistant, discovery, device, mock_now
+) -> None:
     """Testing update hvac connection failure recovery."""
     device().update_state.side_effect = [
         DeviceTimeoutError,
@@ -293,7 +289,9 @@ async def test_update_connection_failure_recovery(hass, discovery, device, mock_
     assert state.state != STATE_UNAVAILABLE
 
 
-async def test_update_unhandled_exception(hass, discovery, device, mock_now):
+async def test_update_unhandled_exception(
+    hass: HomeAssistant, discovery, device, mock_now
+) -> None:
     """Testing update hvac connection unhandled response exception."""
     device().update_state.side_effect = [DEFAULT_MOCK, Exception]
 
@@ -313,7 +311,9 @@ async def test_update_unhandled_exception(hass, discovery, device, mock_now):
     assert state.state == STATE_UNAVAILABLE
 
 
-async def test_send_command_device_timeout(hass, discovery, device, mock_now):
+async def test_send_command_device_timeout(
+    hass: HomeAssistant, discovery, device, mock_now
+) -> None:
     """Test for sending power on command to the device with a device timeout."""
     await async_setup_gree(hass)
 
@@ -330,7 +330,7 @@ async def test_send_command_device_timeout(hass, discovery, device, mock_now):
     device().push_state_update.side_effect = DeviceTimeoutError
 
     # Send failure should not raise exceptions or change device state
-    assert await hass.services.async_call(
+    await hass.services.async_call(
         DOMAIN,
         SERVICE_TURN_ON,
         {ATTR_ENTITY_ID: ENTITY_ID},
@@ -342,11 +342,11 @@ async def test_send_command_device_timeout(hass, discovery, device, mock_now):
     assert state.state != STATE_UNAVAILABLE
 
 
-async def test_send_power_on(hass, discovery, device, mock_now):
+async def test_send_power_on(hass: HomeAssistant, discovery, device, mock_now) -> None:
     """Test for sending power on command to the device."""
     await async_setup_gree(hass)
 
-    assert await hass.services.async_call(
+    await hass.services.async_call(
         DOMAIN,
         SERVICE_TURN_OFF,
         {ATTR_ENTITY_ID: ENTITY_ID},
@@ -355,16 +355,18 @@ async def test_send_power_on(hass, discovery, device, mock_now):
 
     state = hass.states.get(ENTITY_ID)
     assert state is not None
-    assert state.state == HVAC_MODE_OFF
+    assert state.state == HVACMode.OFF
 
 
-async def test_send_power_off_device_timeout(hass, discovery, device, mock_now):
+async def test_send_power_off_device_timeout(
+    hass: HomeAssistant, discovery, device, mock_now
+) -> None:
     """Test for sending power off command to the device with a device timeout."""
     device().push_state_update.side_effect = DeviceTimeoutError
 
     await async_setup_gree(hass)
 
-    assert await hass.services.async_call(
+    await hass.services.async_call(
         DOMAIN,
         SERVICE_TURN_OFF,
         {ATTR_ENTITY_ID: ENTITY_ID},
@@ -373,64 +375,149 @@ async def test_send_power_off_device_timeout(hass, discovery, device, mock_now):
 
     state = hass.states.get(ENTITY_ID)
     assert state is not None
-    assert state.state == HVAC_MODE_OFF
+    assert state.state == HVACMode.OFF
 
 
-async def test_send_target_temperature(hass, discovery, device, mock_now):
+@pytest.mark.parametrize(
+    ("units", "temperature"),
+    [(UnitOfTemperature.CELSIUS, 26), (UnitOfTemperature.FAHRENHEIT, 74)],
+)
+async def test_send_target_temperature(
+    hass: HomeAssistant, discovery, device, units, temperature
+) -> None:
     """Test for sending target temperature command to the device."""
+    hass.config.units.temperature_unit = units
+
+    device().power = True
+    device().mode = HVAC_MODES_REVERSE.get(HVACMode.AUTO)
+
+    fake_device = device()
+    if units == UnitOfTemperature.FAHRENHEIT:
+        fake_device.temperature_units = 1
+
     await async_setup_gree(hass)
 
-    assert await hass.services.async_call(
+    # Make sure we're trying to test something that isn't the default
+    assert fake_device.current_temperature != temperature
+
+    await hass.services.async_call(
         DOMAIN,
         SERVICE_SET_TEMPERATURE,
-        {ATTR_ENTITY_ID: ENTITY_ID, ATTR_TEMPERATURE: 25.1},
+        {ATTR_ENTITY_ID: ENTITY_ID, ATTR_TEMPERATURE: temperature},
         blocking=True,
     )
 
     state = hass.states.get(ENTITY_ID)
     assert state is not None
-    assert state.attributes.get(ATTR_TEMPERATURE) == 25
+    assert state.attributes.get(ATTR_TEMPERATURE) == temperature
+    assert (
+        state.attributes.get(ATTR_CURRENT_TEMPERATURE)
+        == fake_device.current_temperature
+    )
+    assert state.state == HVAC_MODES.get(fake_device.mode)
+
+    # Reset config temperature_unit back to CELSIUS, required for
+    # additional tests outside this component.
+    hass.config.units.temperature_unit = UnitOfTemperature.CELSIUS
 
 
+@pytest.mark.parametrize(
+    ("temperature", "hvac_mode"),
+    [
+        (26, HVACMode.OFF),
+        (26, HVACMode.HEAT),
+        (26, HVACMode.COOL),
+        (26, HVACMode.AUTO),
+        (26, HVACMode.DRY),
+        (26, HVACMode.FAN_ONLY),
+    ],
+)
+async def test_send_target_temperature_with_hvac_mode(
+    hass: HomeAssistant, discovery, device, temperature, hvac_mode
+) -> None:
+    """Test for sending target temperature command to the device alongside hvac mode."""
+    await async_setup_gree(hass)
+
+    await hass.services.async_call(
+        DOMAIN,
+        SERVICE_SET_TEMPERATURE,
+        {
+            ATTR_ENTITY_ID: ENTITY_ID,
+            ATTR_TEMPERATURE: temperature,
+            ATTR_HVAC_MODE: hvac_mode,
+        },
+        blocking=True,
+    )
+
+    state = hass.states.get(ENTITY_ID)
+    assert state is not None
+    assert state.attributes.get(ATTR_TEMPERATURE) == temperature
+    assert state.state == hvac_mode
+
+
+@pytest.mark.parametrize(
+    ("units", "temperature"),
+    [(UnitOfTemperature.CELSIUS, 25), (UnitOfTemperature.FAHRENHEIT, 74)],
+)
 async def test_send_target_temperature_device_timeout(
-    hass, discovery, device, mock_now
-):
+    hass: HomeAssistant, discovery, device, units, temperature
+) -> None:
     """Test for sending target temperature command to the device with a device timeout."""
+    hass.config.units.temperature_unit = units
+    if units == UnitOfTemperature.FAHRENHEIT:
+        device().temperature_units = 1
     device().push_state_update.side_effect = DeviceTimeoutError
 
     await async_setup_gree(hass)
 
-    assert await hass.services.async_call(
+    await hass.services.async_call(
         DOMAIN,
         SERVICE_SET_TEMPERATURE,
-        {ATTR_ENTITY_ID: ENTITY_ID, ATTR_TEMPERATURE: 25.1},
+        {ATTR_ENTITY_ID: ENTITY_ID, ATTR_TEMPERATURE: temperature},
         blocking=True,
     )
 
     state = hass.states.get(ENTITY_ID)
     assert state is not None
-    assert state.attributes.get(ATTR_TEMPERATURE) == 25
+    assert state.attributes.get(ATTR_TEMPERATURE) == temperature
+
+    # Reset config temperature_unit back to CELSIUS, required for additional tests outside this component.
+    hass.config.units.temperature_unit = UnitOfTemperature.CELSIUS
 
 
-async def test_update_target_temperature(hass, discovery, device, mock_now):
+@pytest.mark.parametrize(
+    ("units", "temperature"),
+    [(UnitOfTemperature.CELSIUS, 25), (UnitOfTemperature.FAHRENHEIT, 74)],
+)
+async def test_update_target_temperature(
+    hass: HomeAssistant, discovery, device, units, temperature
+) -> None:
     """Test for updating target temperature from the device."""
-    device().target_temperature = 32
+    hass.config.units.temperature_unit = units
+    if units == UnitOfTemperature.FAHRENHEIT:
+        device().temperature_units = 1
+    device().target_temperature = temperature
 
     await async_setup_gree(hass)
 
     state = hass.states.get(ENTITY_ID)
     assert state is not None
-    assert state.attributes.get(ATTR_TEMPERATURE) == 32
+    assert state.attributes.get(ATTR_TEMPERATURE) == temperature
+
+    # Reset config temperature_unit back to CELSIUS, required for additional tests outside this component.
+    hass.config.units.temperature_unit = UnitOfTemperature.CELSIUS
 
 
 @pytest.mark.parametrize(
     "preset", (PRESET_AWAY, PRESET_ECO, PRESET_SLEEP, PRESET_BOOST, PRESET_NONE)
 )
-async def test_send_preset_mode(hass, discovery, device, mock_now, preset):
+async def test_send_preset_mode(
+    hass: HomeAssistant, discovery, device, mock_now, preset
+) -> None:
     """Test for sending preset mode command to the device."""
     await async_setup_gree(hass)
 
-    assert await hass.services.async_call(
+    await hass.services.async_call(
         DOMAIN,
         SERVICE_SET_PRESET_MODE,
         {ATTR_ENTITY_ID: ENTITY_ID, ATTR_PRESET_MODE: preset},
@@ -442,7 +529,9 @@ async def test_send_preset_mode(hass, discovery, device, mock_now, preset):
     assert state.attributes.get(ATTR_PRESET_MODE) == preset
 
 
-async def test_send_invalid_preset_mode(hass, discovery, device, mock_now):
+async def test_send_invalid_preset_mode(
+    hass: HomeAssistant, discovery, device, mock_now
+) -> None:
     """Test for sending preset mode command to the device."""
     await async_setup_gree(hass)
 
@@ -463,14 +552,14 @@ async def test_send_invalid_preset_mode(hass, discovery, device, mock_now):
     "preset", (PRESET_AWAY, PRESET_ECO, PRESET_SLEEP, PRESET_BOOST, PRESET_NONE)
 )
 async def test_send_preset_mode_device_timeout(
-    hass, discovery, device, mock_now, preset
-):
+    hass: HomeAssistant, discovery, device, mock_now, preset
+) -> None:
     """Test for sending preset mode command to the device with a device timeout."""
     device().push_state_update.side_effect = DeviceTimeoutError
 
     await async_setup_gree(hass)
 
-    assert await hass.services.async_call(
+    await hass.services.async_call(
         DOMAIN,
         SERVICE_SET_PRESET_MODE,
         {ATTR_ENTITY_ID: ENTITY_ID, ATTR_PRESET_MODE: preset},
@@ -485,7 +574,9 @@ async def test_send_preset_mode_device_timeout(
 @pytest.mark.parametrize(
     "preset", (PRESET_AWAY, PRESET_ECO, PRESET_SLEEP, PRESET_BOOST, PRESET_NONE)
 )
-async def test_update_preset_mode(hass, discovery, device, mock_now, preset):
+async def test_update_preset_mode(
+    hass: HomeAssistant, discovery, device, mock_now, preset
+) -> None:
     """Test for updating preset mode from the device."""
     device().steady_heat = preset == PRESET_AWAY
     device().power_save = preset == PRESET_ECO
@@ -502,19 +593,21 @@ async def test_update_preset_mode(hass, discovery, device, mock_now, preset):
 @pytest.mark.parametrize(
     "hvac_mode",
     (
-        HVAC_MODE_OFF,
-        HVAC_MODE_AUTO,
-        HVAC_MODE_COOL,
-        HVAC_MODE_DRY,
-        HVAC_MODE_FAN_ONLY,
-        HVAC_MODE_HEAT,
+        HVACMode.OFF,
+        HVACMode.AUTO,
+        HVACMode.COOL,
+        HVACMode.DRY,
+        HVACMode.FAN_ONLY,
+        HVACMode.HEAT,
     ),
 )
-async def test_send_hvac_mode(hass, discovery, device, mock_now, hvac_mode):
+async def test_send_hvac_mode(
+    hass: HomeAssistant, discovery, device, mock_now, hvac_mode
+) -> None:
     """Test for sending hvac mode command to the device."""
     await async_setup_gree(hass)
 
-    assert await hass.services.async_call(
+    await hass.services.async_call(
         DOMAIN,
         SERVICE_SET_HVAC_MODE,
         {ATTR_ENTITY_ID: ENTITY_ID, ATTR_HVAC_MODE: hvac_mode},
@@ -528,17 +621,17 @@ async def test_send_hvac_mode(hass, discovery, device, mock_now, hvac_mode):
 
 @pytest.mark.parametrize(
     "hvac_mode",
-    (HVAC_MODE_AUTO, HVAC_MODE_COOL, HVAC_MODE_DRY, HVAC_MODE_FAN_ONLY, HVAC_MODE_HEAT),
+    (HVACMode.AUTO, HVACMode.COOL, HVACMode.DRY, HVACMode.FAN_ONLY, HVACMode.HEAT),
 )
 async def test_send_hvac_mode_device_timeout(
-    hass, discovery, device, mock_now, hvac_mode
-):
+    hass: HomeAssistant, discovery, device, mock_now, hvac_mode
+) -> None:
     """Test for sending hvac mode command to the device with a device timeout."""
     device().push_state_update.side_effect = DeviceTimeoutError
 
     await async_setup_gree(hass)
 
-    assert await hass.services.async_call(
+    await hass.services.async_call(
         DOMAIN,
         SERVICE_SET_HVAC_MODE,
         {ATTR_ENTITY_ID: ENTITY_ID, ATTR_HVAC_MODE: hvac_mode},
@@ -553,17 +646,19 @@ async def test_send_hvac_mode_device_timeout(
 @pytest.mark.parametrize(
     "hvac_mode",
     (
-        HVAC_MODE_OFF,
-        HVAC_MODE_AUTO,
-        HVAC_MODE_COOL,
-        HVAC_MODE_DRY,
-        HVAC_MODE_FAN_ONLY,
-        HVAC_MODE_HEAT,
+        HVACMode.OFF,
+        HVACMode.AUTO,
+        HVACMode.COOL,
+        HVACMode.DRY,
+        HVACMode.FAN_ONLY,
+        HVACMode.HEAT,
     ),
 )
-async def test_update_hvac_mode(hass, discovery, device, mock_now, hvac_mode):
+async def test_update_hvac_mode(
+    hass: HomeAssistant, discovery, device, mock_now, hvac_mode
+) -> None:
     """Test for updating hvac mode from the device."""
-    device().power = hvac_mode != HVAC_MODE_OFF
+    device().power = hvac_mode != HVACMode.OFF
     device().mode = HVAC_MODES_REVERSE.get(hvac_mode)
 
     await async_setup_gree(hass)
@@ -577,11 +672,13 @@ async def test_update_hvac_mode(hass, discovery, device, mock_now, hvac_mode):
     "fan_mode",
     (FAN_AUTO, FAN_LOW, FAN_MEDIUM_LOW, FAN_MEDIUM, FAN_MEDIUM_HIGH, FAN_HIGH),
 )
-async def test_send_fan_mode(hass, discovery, device, mock_now, fan_mode):
+async def test_send_fan_mode(
+    hass: HomeAssistant, discovery, device, mock_now, fan_mode
+) -> None:
     """Test for sending fan mode command to the device."""
     await async_setup_gree(hass)
 
-    assert await hass.services.async_call(
+    await hass.services.async_call(
         DOMAIN,
         SERVICE_SET_FAN_MODE,
         {ATTR_ENTITY_ID: ENTITY_ID, ATTR_FAN_MODE: fan_mode},
@@ -593,7 +690,9 @@ async def test_send_fan_mode(hass, discovery, device, mock_now, fan_mode):
     assert state.attributes.get(ATTR_FAN_MODE) == fan_mode
 
 
-async def test_send_invalid_fan_mode(hass, discovery, device, mock_now):
+async def test_send_invalid_fan_mode(
+    hass: HomeAssistant, discovery, device, mock_now
+) -> None:
     """Test for sending fan mode command to the device."""
     await async_setup_gree(hass)
 
@@ -615,14 +714,14 @@ async def test_send_invalid_fan_mode(hass, discovery, device, mock_now):
     (FAN_AUTO, FAN_LOW, FAN_MEDIUM_LOW, FAN_MEDIUM, FAN_MEDIUM_HIGH, FAN_HIGH),
 )
 async def test_send_fan_mode_device_timeout(
-    hass, discovery, device, mock_now, fan_mode
-):
+    hass: HomeAssistant, discovery, device, mock_now, fan_mode
+) -> None:
     """Test for sending fan mode command to the device with a device timeout."""
     device().push_state_update.side_effect = DeviceTimeoutError
 
     await async_setup_gree(hass)
 
-    assert await hass.services.async_call(
+    await hass.services.async_call(
         DOMAIN,
         SERVICE_SET_FAN_MODE,
         {ATTR_ENTITY_ID: ENTITY_ID, ATTR_FAN_MODE: fan_mode},
@@ -638,7 +737,9 @@ async def test_send_fan_mode_device_timeout(
     "fan_mode",
     (FAN_AUTO, FAN_LOW, FAN_MEDIUM_LOW, FAN_MEDIUM, FAN_MEDIUM_HIGH, FAN_HIGH),
 )
-async def test_update_fan_mode(hass, discovery, device, mock_now, fan_mode):
+async def test_update_fan_mode(
+    hass: HomeAssistant, discovery, device, mock_now, fan_mode
+) -> None:
     """Test for updating fan mode from the device."""
     device().fan_speed = FAN_MODES_REVERSE.get(fan_mode)
 
@@ -652,11 +753,13 @@ async def test_update_fan_mode(hass, discovery, device, mock_now, fan_mode):
 @pytest.mark.parametrize(
     "swing_mode", (SWING_OFF, SWING_BOTH, SWING_VERTICAL, SWING_HORIZONTAL)
 )
-async def test_send_swing_mode(hass, discovery, device, mock_now, swing_mode):
+async def test_send_swing_mode(
+    hass: HomeAssistant, discovery, device, mock_now, swing_mode
+) -> None:
     """Test for sending swing mode command to the device."""
     await async_setup_gree(hass)
 
-    assert await hass.services.async_call(
+    await hass.services.async_call(
         DOMAIN,
         SERVICE_SET_SWING_MODE,
         {ATTR_ENTITY_ID: ENTITY_ID, ATTR_SWING_MODE: swing_mode},
@@ -668,7 +771,9 @@ async def test_send_swing_mode(hass, discovery, device, mock_now, swing_mode):
     assert state.attributes.get(ATTR_SWING_MODE) == swing_mode
 
 
-async def test_send_invalid_swing_mode(hass, discovery, device, mock_now):
+async def test_send_invalid_swing_mode(
+    hass: HomeAssistant, discovery, device, mock_now
+) -> None:
     """Test for sending swing mode command to the device."""
     await async_setup_gree(hass)
 
@@ -689,14 +794,14 @@ async def test_send_invalid_swing_mode(hass, discovery, device, mock_now):
     "swing_mode", (SWING_OFF, SWING_BOTH, SWING_VERTICAL, SWING_HORIZONTAL)
 )
 async def test_send_swing_mode_device_timeout(
-    hass, discovery, device, mock_now, swing_mode
-):
+    hass: HomeAssistant, discovery, device, mock_now, swing_mode
+) -> None:
     """Test for sending swing mode command to the device with a device timeout."""
     device().push_state_update.side_effect = DeviceTimeoutError
 
     await async_setup_gree(hass)
 
-    assert await hass.services.async_call(
+    await hass.services.async_call(
         DOMAIN,
         SERVICE_SET_SWING_MODE,
         {ATTR_ENTITY_ID: ENTITY_ID, ATTR_SWING_MODE: swing_mode},
@@ -711,7 +816,9 @@ async def test_send_swing_mode_device_timeout(
 @pytest.mark.parametrize(
     "swing_mode", (SWING_OFF, SWING_BOTH, SWING_VERTICAL, SWING_HORIZONTAL)
 )
-async def test_update_swing_mode(hass, discovery, device, mock_now, swing_mode):
+async def test_update_swing_mode(
+    hass: HomeAssistant, discovery, device, mock_now, swing_mode
+) -> None:
     """Test for updating swing mode from the device."""
     device().horizontal_swing = (
         HorizontalSwing.FullSwing
@@ -731,15 +838,20 @@ async def test_update_swing_mode(hass, discovery, device, mock_now, swing_mode):
     assert state.attributes.get(ATTR_SWING_MODE) == swing_mode
 
 
-async def test_name(hass, discovery, device):
-    """Test for name property."""
-    await async_setup_gree(hass)
-    state = hass.states.get(ENTITY_ID)
-    assert state.attributes[ATTR_FRIENDLY_NAME] == "fake-device-1"
+@patch("homeassistant.components.gree.PLATFORMS", [DOMAIN])
+async def test_registry_settings(
+    hass: HomeAssistant, entity_registry: er.EntityRegistry, snapshot: SnapshotAssertion
+) -> None:
+    """Test for entity registry settings (unique_id)."""
+    entry = await async_setup_gree(hass)
+
+    entries = er.async_entries_for_config_entry(entity_registry, entry.entry_id)
+    assert entries == snapshot
 
 
-async def test_supported_features_with_turnon(hass, discovery, device):
-    """Test for supported_features property."""
+@patch("homeassistant.components.gree.PLATFORMS", [DOMAIN])
+async def test_entity_states(hass: HomeAssistant, snapshot: SnapshotAssertion) -> None:
+    """Test for entity registry settings (unique_id)."""
     await async_setup_gree(hass)
-    state = hass.states.get(ENTITY_ID)
-    assert state.attributes[ATTR_SUPPORTED_FEATURES] == SUPPORTED_FEATURES
+    states = hass.states.async_all()
+    assert states == snapshot

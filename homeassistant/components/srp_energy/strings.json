@@ -1,5 +1,4 @@
 {
-  "title": "SRP Energy",
   "config": {
     "step": {
       "user": {
@@ -19,6 +18,13 @@
     },
     "abort": {
       "single_instance_allowed": "[%key:common::config_flow::abort::single_instance_allowed%]"
+    }
+  },
+  "entity": {
+    "sensor": {
+      "energy_usage": {
+        "name": "Energy usage"
+      }
     }
   }
 }

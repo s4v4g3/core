@@ -1,16 +1,24 @@
 """Support for VELUX KLF 200 devices."""
 import logging
 
-from pyvlx import PyVLX, PyVLXException
+from pyvlx import OpeningDevice, PyVLX, PyVLXException
 import voluptuous as vol
 
-from homeassistant.const import CONF_HOST, CONF_PASSWORD, EVENT_HOMEASSISTANT_STOP
+from homeassistant.const import (
+    CONF_HOST,
+    CONF_PASSWORD,
+    EVENT_HOMEASSISTANT_STOP,
+    Platform,
+)
+from homeassistant.core import HomeAssistant, ServiceCall, callback
 from homeassistant.helpers import discovery
 import homeassistant.helpers.config_validation as cv
+from homeassistant.helpers.entity import Entity
+from homeassistant.helpers.typing import ConfigType
 
 DOMAIN = "velux"
 DATA_VELUX = "data_velux"
-PLATFORMS = ["cover", "scene"]
+PLATFORMS = [Platform.COVER, Platform.LIGHT, Platform.SCENE]
 _LOGGER = logging.getLogger(__name__)
 
 CONFIG_SCHEMA = vol.Schema(
@@ -23,7 +31,7 @@ CONFIG_SCHEMA = vol.Schema(
 )
 
 
-async def async_setup(hass, config):
+async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     """Set up the velux component."""
     try:
         hass.data[DATA_VELUX] = VeluxModule(hass, config[DOMAIN])
@@ -58,7 +66,7 @@ class VeluxModule:
             _LOGGER.debug("Velux interface terminated")
             await self.pyvlx.disconnect()
 
-        async def async_reboot_gateway(service_call):
+        async def async_reboot_gateway(service_call: ServiceCall) -> None:
             await self.pyvlx.reboot_gateway()
 
         self._hass.bus.async_listen_once(EVENT_HOMEASSISTANT_STOP, on_hass_stop)
@@ -75,3 +83,29 @@ class VeluxModule:
         _LOGGER.debug("Velux interface started")
         await self.pyvlx.load_scenes()
         await self.pyvlx.load_nodes()
+
+
+class VeluxEntity(Entity):
+    """Abstraction for al Velux entities."""
+
+    _attr_should_poll = False
+
+    def __init__(self, node: OpeningDevice) -> None:
+        """Initialize the Velux device."""
+        self.node = node
+        self._attr_unique_id = node.serial_number
+        self._attr_name = node.name if node.name else f"#{node.node_id}"
+
+    @callback
+    def async_register_callbacks(self):
+        """Register callbacks to update hass after device was changed."""
+
+        async def after_update_callback(device):
+            """Call after device was updated."""
+            self.async_write_ha_state()
+
+        self.node.register_device_updated_cb(after_update_callback)
+
+    async def async_added_to_hass(self):
+        """Store register state change callback."""
+        self.async_register_callbacks()

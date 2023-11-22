@@ -1,15 +1,17 @@
 """StarLine Account."""
 from __future__ import annotations
 
+from collections.abc import Callable
 from datetime import datetime, timedelta
-from typing import Any, Callable
+from typing import Any
 
 from starline import StarlineApi, StarlineDevice
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
-from homeassistant.helpers.entity import DeviceInfo
+from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.event import async_track_time_interval
+from homeassistant.util import dt as dt_util
 
 from .const import (
     _LOGGER,
@@ -26,7 +28,7 @@ from .const import (
 class StarlineAccount:
     """StarLine Account class."""
 
-    def __init__(self, hass: HomeAssistant, config_entry: ConfigEntry):
+    def __init__(self, hass: HomeAssistant, config_entry: ConfigEntry) -> None:
         """Initialize StarLine account."""
         self._hass: HomeAssistant = hass
         self._config_entry: ConfigEntry = config_entry
@@ -128,19 +130,21 @@ class StarlineAccount:
     @staticmethod
     def device_info(device: StarlineDevice) -> DeviceInfo:
         """Device information for entities."""
-        return {
-            "identifiers": {(DOMAIN, device.device_id)},
-            "manufacturer": "StarLine",
-            "name": device.name,
-            "sw_version": device.fw_version,
-            "model": device.typename,
-        }
+        return DeviceInfo(
+            identifiers={(DOMAIN, device.device_id)},
+            manufacturer="StarLine",
+            model=device.typename,
+            name=device.name,
+            sw_version=device.fw_version,
+        )
 
     @staticmethod
     def gps_attrs(device: StarlineDevice) -> dict[str, Any]:
         """Attributes for device tracker."""
         return {
-            "updated": datetime.utcfromtimestamp(device.position["ts"]).isoformat(),
+            "updated": dt_util.utc_from_timestamp(device.position["ts"])
+            .replace(tzinfo=None)
+            .isoformat(),
             "online": device.online,
         }
 

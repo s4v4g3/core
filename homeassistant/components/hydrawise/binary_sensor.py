@@ -1,57 +1,94 @@
 """Support for Hydrawise sprinkler binary sensors."""
-import logging
+from __future__ import annotations
 
+from pydrawise.schema import Zone
 import voluptuous as vol
 
-from homeassistant.components.binary_sensor import PLATFORM_SCHEMA, BinarySensorEntity
+from homeassistant.components.binary_sensor import (
+    PLATFORM_SCHEMA,
+    BinarySensorDeviceClass,
+    BinarySensorEntity,
+    BinarySensorEntityDescription,
+)
+from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_MONITORED_CONDITIONS
+from homeassistant.core import HomeAssistant
 import homeassistant.helpers.config_validation as cv
+from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from homeassistant.helpers.typing import ConfigType, DiscoveryInfoType
 
-from . import BINARY_SENSORS, DATA_HYDRAWISE, HydrawiseEntity
+from .const import DOMAIN
+from .coordinator import HydrawiseDataUpdateCoordinator
+from .entity import HydrawiseEntity
 
-_LOGGER = logging.getLogger(__name__)
+BINARY_SENSOR_STATUS = BinarySensorEntityDescription(
+    key="status",
+    device_class=BinarySensorDeviceClass.CONNECTIVITY,
+)
 
+BINARY_SENSOR_TYPES: tuple[BinarySensorEntityDescription, ...] = (
+    BinarySensorEntityDescription(
+        key="is_watering",
+        translation_key="watering",
+        device_class=BinarySensorDeviceClass.MOISTURE,
+    ),
+)
+
+BINARY_SENSOR_KEYS: list[str] = [
+    desc.key for desc in (BINARY_SENSOR_STATUS, *BINARY_SENSOR_TYPES)
+]
+
+# Deprecated since Home Assistant 2023.10.0
+# Can be removed completely in 2024.4.0
 PLATFORM_SCHEMA = PLATFORM_SCHEMA.extend(
     {
-        vol.Optional(CONF_MONITORED_CONDITIONS, default=BINARY_SENSORS): vol.All(
-            cv.ensure_list, [vol.In(BINARY_SENSORS)]
+        vol.Optional(CONF_MONITORED_CONDITIONS, default=BINARY_SENSOR_KEYS): vol.All(
+            cv.ensure_list, [vol.In(BINARY_SENSOR_KEYS)]
         )
     }
 )
 
 
-def setup_platform(hass, config, add_entities, discovery_info=None):
+def setup_platform(
+    hass: HomeAssistant,
+    config: ConfigType,
+    add_entities: AddEntitiesCallback,
+    discovery_info: DiscoveryInfoType | None = None,
+) -> None:
     """Set up a sensor for a Hydrawise device."""
-    hydrawise = hass.data[DATA_HYDRAWISE].data
+    # We don't need to trigger import flow from here as it's triggered from `__init__.py`
+    return  # pragma: no cover
 
-    sensors = []
-    for sensor_type in config.get(CONF_MONITORED_CONDITIONS):
-        if sensor_type == "status":
-            sensors.append(
-                HydrawiseBinarySensor(hydrawise.current_controller, sensor_type)
-            )
-        else:
-            # create a sensor for each zone
-            for zone in hydrawise.relays:
-                sensors.append(HydrawiseBinarySensor(zone, sensor_type))
 
-    add_entities(sensors, True)
+async def async_setup_entry(
+    hass: HomeAssistant,
+    config_entry: ConfigEntry,
+    async_add_entities: AddEntitiesCallback,
+) -> None:
+    """Set up the Hydrawise binary_sensor platform."""
+    coordinator: HydrawiseDataUpdateCoordinator = hass.data[DOMAIN][
+        config_entry.entry_id
+    ]
+    entities = []
+    for controller in coordinator.data.controllers:
+        entities.append(
+            HydrawiseBinarySensor(coordinator, BINARY_SENSOR_STATUS, controller)
+        )
+        for zone in controller.zones:
+            for description in BINARY_SENSOR_TYPES:
+                entities.append(
+                    HydrawiseBinarySensor(coordinator, description, controller, zone)
+                )
+    async_add_entities(entities)
 
 
 class HydrawiseBinarySensor(HydrawiseEntity, BinarySensorEntity):
     """A sensor implementation for Hydrawise device."""
 
-    @property
-    def is_on(self):
-        """Return true if the binary sensor is on."""
-        return self._state
-
-    def update(self):
-        """Get the latest data and updates the state."""
-        _LOGGER.debug("Updating Hydrawise binary sensor: %s", self._name)
-        mydata = self.hass.data[DATA_HYDRAWISE].data
-        if self._sensor_type == "status":
-            self._state = mydata.status == "All good!"
-        elif self._sensor_type == "is_watering":
-            relay_data = mydata.relays[self.data["relay"] - 1]
-            self._state = relay_data["timestr"] == "Now"
+    def _update_attrs(self) -> None:
+        """Update state attributes."""
+        if self.entity_description.key == "status":
+            self._attr_is_on = self.coordinator.last_update_success
+        elif self.entity_description.key == "is_watering":
+            zone: Zone = self.zone
+            self._attr_is_on = zone.scheduled_runs.current_run is not None

@@ -1,21 +1,29 @@
 """Support for LCN binary sensors."""
+from __future__ import annotations
+
 import pypck
 
 from homeassistant.components.binary_sensor import (
     DOMAIN as DOMAIN_BINARY_SENSOR,
     BinarySensorEntity,
 )
+from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_ADDRESS, CONF_DOMAIN, CONF_ENTITIES, CONF_SOURCE
+from homeassistant.core import HomeAssistant
+from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from homeassistant.helpers.typing import ConfigType
 
 from . import LcnEntity
 from .const import BINSENSOR_PORTS, CONF_DOMAIN_DATA, SETPOINTS
-from .helpers import get_device_connection
+from .helpers import DeviceConnectionType, InputType, get_device_connection
 
 
-def create_lcn_binary_sensor_entity(hass, entity_config, config_entry):
+def create_lcn_binary_sensor_entity(
+    hass: HomeAssistant, entity_config: ConfigType, config_entry: ConfigEntry
+) -> LcnEntity:
     """Set up an entity for this domain."""
     device_connection = get_device_connection(
-        hass, tuple(entity_config[CONF_ADDRESS]), config_entry
+        hass, entity_config[CONF_ADDRESS], config_entry
     )
 
     if entity_config[CONF_DOMAIN_DATA][CONF_SOURCE] in SETPOINTS:
@@ -28,7 +36,11 @@ def create_lcn_binary_sensor_entity(hass, entity_config, config_entry):
     return LcnLockKeysSensor(entity_config, config_entry.entry_id, device_connection)
 
 
-async def async_setup_entry(hass, config_entry, async_add_entities):
+async def async_setup_entry(
+    hass: HomeAssistant,
+    config_entry: ConfigEntry,
+    async_add_entities: AddEntitiesCallback,
+) -> None:
     """Set up LCN switch entities from a config entry."""
     entities = []
 
@@ -44,7 +56,9 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
 class LcnRegulatorLockSensor(LcnEntity, BinarySensorEntity):
     """Representation of a LCN binary sensor for regulator locks."""
 
-    def __init__(self, config, entry_id, device_connection):
+    def __init__(
+        self, config: ConfigType, entry_id: str, device_connection: DeviceConnectionType
+    ) -> None:
         """Initialize the LCN binary sensor."""
         super().__init__(config, entry_id, device_connection)
 
@@ -52,9 +66,7 @@ class LcnRegulatorLockSensor(LcnEntity, BinarySensorEntity):
             config[CONF_DOMAIN_DATA][CONF_SOURCE]
         ]
 
-        self._value = None
-
-    async def async_added_to_hass(self):
+    async def async_added_to_hass(self) -> None:
         """Run when entity about to be added to hass."""
         await super().async_added_to_hass()
         if not self.device_connection.is_group:
@@ -62,7 +74,7 @@ class LcnRegulatorLockSensor(LcnEntity, BinarySensorEntity):
                 self.setpoint_variable
             )
 
-    async def async_will_remove_from_hass(self):
+    async def async_will_remove_from_hass(self) -> None:
         """Run when entity will be removed from hass."""
         await super().async_will_remove_from_hass()
         if not self.device_connection.is_group:
@@ -70,12 +82,7 @@ class LcnRegulatorLockSensor(LcnEntity, BinarySensorEntity):
                 self.setpoint_variable
             )
 
-    @property
-    def is_on(self):
-        """Return true if the binary sensor is on."""
-        return self._value
-
-    def input_received(self, input_obj):
+    def input_received(self, input_obj: InputType) -> None:
         """Set sensor value when LCN input object (command) is received."""
         if (
             not isinstance(input_obj, pypck.inputs.ModStatusVar)
@@ -83,14 +90,16 @@ class LcnRegulatorLockSensor(LcnEntity, BinarySensorEntity):
         ):
             return
 
-        self._value = input_obj.get_value().is_locked_regulator()
+        self._attr_is_on = input_obj.get_value().is_locked_regulator()
         self.async_write_ha_state()
 
 
 class LcnBinarySensor(LcnEntity, BinarySensorEntity):
     """Representation of a LCN binary sensor for binary sensor ports."""
 
-    def __init__(self, config, entry_id, device_connection):
+    def __init__(
+        self, config: ConfigType, entry_id: str, device_connection: DeviceConnectionType
+    ) -> None:
         """Initialize the LCN binary sensor."""
         super().__init__(config, entry_id, device_connection)
 
@@ -98,9 +107,7 @@ class LcnBinarySensor(LcnEntity, BinarySensorEntity):
             config[CONF_DOMAIN_DATA][CONF_SOURCE]
         ]
 
-        self._value = None
-
-    async def async_added_to_hass(self):
+    async def async_added_to_hass(self) -> None:
         """Run when entity about to be added to hass."""
         await super().async_added_to_hass()
         if not self.device_connection.is_group:
@@ -108,7 +115,7 @@ class LcnBinarySensor(LcnEntity, BinarySensorEntity):
                 self.bin_sensor_port
             )
 
-    async def async_will_remove_from_hass(self):
+    async def async_will_remove_from_hass(self) -> None:
         """Run when entity will be removed from hass."""
         await super().async_will_remove_from_hass()
         if not self.device_connection.is_group:
@@ -116,48 +123,39 @@ class LcnBinarySensor(LcnEntity, BinarySensorEntity):
                 self.bin_sensor_port
             )
 
-    @property
-    def is_on(self):
-        """Return true if the binary sensor is on."""
-        return self._value
-
-    def input_received(self, input_obj):
+    def input_received(self, input_obj: InputType) -> None:
         """Set sensor value when LCN input object (command) is received."""
         if not isinstance(input_obj, pypck.inputs.ModStatusBinSensors):
             return
 
-        self._value = input_obj.get_state(self.bin_sensor_port.value)
+        self._attr_is_on = input_obj.get_state(self.bin_sensor_port.value)
         self.async_write_ha_state()
 
 
 class LcnLockKeysSensor(LcnEntity, BinarySensorEntity):
     """Representation of a LCN sensor for key locks."""
 
-    def __init__(self, config, entry_id, device_connection):
+    def __init__(
+        self, config: ConfigType, entry_id: str, device_connection: DeviceConnectionType
+    ) -> None:
         """Initialize the LCN sensor."""
         super().__init__(config, entry_id, device_connection)
 
         self.source = pypck.lcn_defs.Key[config[CONF_DOMAIN_DATA][CONF_SOURCE]]
-        self._value = None
 
-    async def async_added_to_hass(self):
+    async def async_added_to_hass(self) -> None:
         """Run when entity about to be added to hass."""
         await super().async_added_to_hass()
         if not self.device_connection.is_group:
             await self.device_connection.activate_status_request_handler(self.source)
 
-    async def async_will_remove_from_hass(self):
+    async def async_will_remove_from_hass(self) -> None:
         """Run when entity will be removed from hass."""
         await super().async_will_remove_from_hass()
         if not self.device_connection.is_group:
             await self.device_connection.cancel_status_request_handler(self.source)
 
-    @property
-    def is_on(self):
-        """Return true if the binary sensor is on."""
-        return self._value
-
-    def input_received(self, input_obj):
+    def input_received(self, input_obj: InputType) -> None:
         """Set sensor value when LCN input object (command) is received."""
         if (
             not isinstance(input_obj, pypck.inputs.ModStatusKeyLocks)
@@ -168,5 +166,5 @@ class LcnLockKeysSensor(LcnEntity, BinarySensorEntity):
         table_id = ord(self.source.name[0]) - 65
         key_id = int(self.source.name[1]) - 1
 
-        self._value = input_obj.get_state(table_id, key_id)
+        self._attr_is_on = input_obj.get_state(table_id, key_id)
         self.async_write_ha_state()

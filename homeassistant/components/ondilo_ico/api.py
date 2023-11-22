@@ -1,6 +1,7 @@
 """API for Ondilo ICO bound to Home Assistant OAuth."""
 from asyncio import run_coroutine_threadsafe
 import logging
+from typing import Any
 
 from ondilo import Ondilo
 
@@ -18,7 +19,7 @@ class OndiloClient(Ondilo):
         hass: core.HomeAssistant,
         config_entry: config_entries.ConfigEntry,
         implementation: config_entry_oauth2_flow.AbstractOAuth2Implementation,
-    ):
+    ) -> None:
         """Initialize Ondilo ICO Auth."""
         self.hass = hass
         self.config_entry = config_entry
@@ -35,7 +36,7 @@ class OndiloClient(Ondilo):
 
         return self.session.token
 
-    def get_all_pools_data(self) -> dict:
+    def get_all_pools_data(self) -> list[dict[str, Any]]:
         """Fetch pools and add pool details and last measures to pool data."""
 
         pools = self.get_pools()

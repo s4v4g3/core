@@ -37,9 +37,7 @@ def mock_connection_fixture() -> AsyncConnection:
     def _rest_call_side_effect(path, body=None):
         return path, body
 
-    connection._restCall.side_effect = (  # pylint: disable=protected-access
-        _rest_call_side_effect
-    )
+    connection._restCall.side_effect = _rest_call_side_effect
     connection.api_call = AsyncMock(return_value=True)
     connection.init = AsyncMock(side_effect=True)
 
@@ -62,7 +60,6 @@ def hmip_config_entry_fixture() -> config_entries.ConfigEntry:
         unique_id=HAPID,
         data=entry_data,
         source=SOURCE_IMPORT,
-        system_options={"disable_new_entities": False},
     )
 
     return config_entry

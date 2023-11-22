@@ -15,9 +15,16 @@ from homeassistant.const import (
     CONF_REGION,
     CONF_TOKEN,
 )
+from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.util import location
 
-from .const import CONFIG_ENTRY_VERSION, DEFAULT_ALIAS, DEFAULT_NAME, DOMAIN
+from .const import (
+    CONFIG_ENTRY_VERSION,
+    COUNTRYCODE_NAMES,
+    DEFAULT_ALIAS,
+    DEFAULT_NAME,
+    DOMAIN,
+)
 
 CONF_MODE = "Config Mode"
 CONF_AUTO = "Auto Discover"
@@ -82,8 +89,7 @@ class PlayStation4FlowHandler(config_entries.ConfigFlow, domain=DOMAIN):
         if user_input is not None:
             if user_input[CONF_MODE] == CONF_MANUAL:
                 try:
-                    device = user_input[CONF_IP_ADDRESS]
-                    if device:
+                    if device := user_input[CONF_IP_ADDRESS]:
                         self.m_device = device
                 except KeyError:
                     errors[CONF_IP_ADDRESS] = "no_ipaddress"
@@ -175,10 +181,10 @@ class PlayStation4FlowHandler(config_entries.ConfigFlow, domain=DOMAIN):
         # Try to find region automatically.
         if not self.location:
             self.location = await location.async_detect_location_info(
-                self.hass.helpers.aiohttp_client.async_get_clientsession()
+                async_get_clientsession(self.hass)
             )
         if self.location:
-            country = self.location.country_name
+            country = COUNTRYCODE_NAMES.get(self.location.country_code)
             if country in COUNTRIES:
                 default_region = country
 

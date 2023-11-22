@@ -2,9 +2,8 @@
 from __future__ import annotations
 
 from collections.abc import Generator, Sequence
+from dataclasses import dataclass
 from typing import TYPE_CHECKING
-
-import attr
 
 if TYPE_CHECKING:
     from .core import Context
@@ -12,6 +11,23 @@ if TYPE_CHECKING:
 
 class HomeAssistantError(Exception):
     """General Home Assistant exception occurred."""
+
+    def __init__(
+        self,
+        *args: object,
+        translation_domain: str | None = None,
+        translation_key: str | None = None,
+        translation_placeholders: dict[str, str] | None = None,
+    ) -> None:
+        """Initialize exception."""
+        super().__init__(*args)
+        self.translation_domain = translation_domain
+        self.translation_key = translation_key
+        self.translation_placeholders = translation_placeholders
+
+
+class ServiceValidationError(HomeAssistantError):
+    """A validation exception occurred when calling a service."""
 
 
 class InvalidEntityFormatError(HomeAssistantError):
@@ -25,24 +41,26 @@ class NoEntitySpecifiedError(HomeAssistantError):
 class TemplateError(HomeAssistantError):
     """Error during template rendering."""
 
-    def __init__(self, exception: Exception) -> None:
+    def __init__(self, exception: Exception | str) -> None:
         """Init the error."""
-        super().__init__(f"{exception.__class__.__name__}: {exception}")
+        if isinstance(exception, str):
+            super().__init__(exception)
+        else:
+            super().__init__(f"{exception.__class__.__name__}: {exception}")
 
 
-@attr.s
+@dataclass(slots=True)
 class ConditionError(HomeAssistantError):
     """Error during condition evaluation."""
 
-    # The type of the failed condition, such as 'and' or 'numeric_state'
-    type: str = attr.ib()
+    type: str
 
     @staticmethod
     def _indent(indent: int, message: str) -> str:
         """Return indentation."""
         return "  " * indent + message
 
-    def output(self, indent: int) -> Generator:
+    def output(self, indent: int) -> Generator[str, None, None]:
         """Yield an indented representation."""
         raise NotImplementedError()
 
@@ -51,30 +69,30 @@ class ConditionError(HomeAssistantError):
         return "\n".join(list(self.output(indent=0)))
 
 
-@attr.s
+@dataclass(slots=True)
 class ConditionErrorMessage(ConditionError):
     """Condition error message."""
 
     # A message describing this error
-    message: str = attr.ib()
+    message: str
 
-    def output(self, indent: int) -> Generator:
+    def output(self, indent: int) -> Generator[str, None, None]:
         """Yield an indented representation."""
         yield self._indent(indent, f"In '{self.type}' condition: {self.message}")
 
 
-@attr.s
+@dataclass(slots=True)
 class ConditionErrorIndex(ConditionError):
     """Condition error with index."""
 
     # The zero-based index of the failed condition, for conditions with multiple parts
-    index: int = attr.ib()
+    index: int
     # The total number of parts in this condition, including non-failed parts
-    total: int = attr.ib()
+    total: int
     # The error that this error wraps
-    error: ConditionError = attr.ib()
+    error: ConditionError
 
-    def output(self, indent: int) -> Generator:
+    def output(self, indent: int) -> Generator[str, None, None]:
         """Yield an indented representation."""
         if self.total > 1:
             yield self._indent(
@@ -86,14 +104,14 @@ class ConditionErrorIndex(ConditionError):
         yield from self.error.output(indent + 1)
 
 
-@attr.s
+@dataclass(slots=True)
 class ConditionErrorContainer(ConditionError):
     """Condition error with subconditions."""
 
     # List of ConditionErrors that this error wraps
-    errors: Sequence[ConditionError] = attr.ib()
+    errors: Sequence[ConditionError]
 
-    def output(self, indent: int) -> Generator:
+    def output(self, indent: int) -> Generator[str, None, None]:
         """Yield an indented representation."""
         for item in self.errors:
             yield from item.output(indent)
@@ -109,6 +127,10 @@ class IntegrationError(HomeAssistantError):
 
 class PlatformNotReady(IntegrationError):
     """Error to indicate that platform is not ready."""
+
+
+class ConfigEntryError(IntegrationError):
+    """Error to indicate that config entry setup has failed."""
 
 
 class ConfigEntryNotReady(IntegrationError):
@@ -160,13 +182,19 @@ class ServiceNotFound(HomeAssistantError):
 
     def __init__(self, domain: str, service: str) -> None:
         """Initialize error."""
-        super().__init__(self, f"Service {domain}.{service} not found")
+        super().__init__(
+            self,
+            f"Service {domain}.{service} not found.",
+            translation_domain="homeassistant",
+            translation_key="service_not_found",
+            translation_placeholders={"domain": domain, "service": service},
+        )
         self.domain = domain
         self.service = service
 
     def __str__(self) -> str:
         """Return string representation."""
-        return f"Unable to find service {self.domain}.{self.service}"
+        return f"Service {self.domain}.{self.service} not found."
 
 
 class MaxLengthExceeded(HomeAssistantError):
@@ -186,16 +214,13 @@ class MaxLengthExceeded(HomeAssistantError):
         self.max_length = max_length
 
 
-class RequiredParameterMissing(HomeAssistantError):
-    """Raised when a required parameter is missing from a function call."""
+class DependencyError(HomeAssistantError):
+    """Raised when dependencies cannot be setup."""
 
-    def __init__(self, parameter_names: list[str]) -> None:
+    def __init__(self, failed_dependencies: list[str]) -> None:
         """Initialize error."""
         super().__init__(
             self,
-            (
-                "Call must include at least one of the following parameters: "
-                f"{', '.join(parameter_names)}"
-            ),
+            f"Could not setup dependencies: {', '.join(failed_dependencies)}",
         )
-        self.parameter_names = parameter_names
+        self.failed_dependencies = failed_dependencies

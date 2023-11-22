@@ -11,13 +11,13 @@ from homeassistant.components.vera import (
     CONF_LIGHTS,
     DOMAIN,
 )
-from homeassistant.config_entries import ENTRY_STATE_NOT_LOADED
+from homeassistant.config_entries import ConfigEntryState
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import entity_registry as er
 
 from .common import ComponentFactory, ConfigSource, new_simple_controller_config
 
-from tests.common import MockConfigEntry, mock_registry
+from tests.common import MockConfigEntry
 
 
 async def test_init(
@@ -75,7 +75,9 @@ async def test_init_from_file(
 
 
 async def test_multiple_controllers_with_legacy_one(
-    hass: HomeAssistant, vera_component_factory: ComponentFactory
+    hass: HomeAssistant,
+    vera_component_factory: ComponentFactory,
+    entity_registry: er.EntityRegistry,
 ) -> None:
     """Test multiple controllers with one legacy controller."""
     vera_device1: pv.VeraBinarySensor = MagicMock(spec=pv.VeraBinarySensor)
@@ -93,7 +95,6 @@ async def test_multiple_controllers_with_legacy_one(
     entity2_id = "binary_sensor.second_dev_2"
 
     # Add existing entity registry entry from previous setup.
-    entity_registry = mock_registry(hass)
     entity_registry.async_get_or_create(
         domain="switch", platform=DOMAIN, unique_id="12"
     )
@@ -148,7 +149,7 @@ async def test_unload(
 
     for config_entry in entries:
         assert await hass.config_entries.async_unload(config_entry.entry_id)
-        assert config_entry.state == ENTRY_STATE_NOT_LOADED
+        assert config_entry.state is ConfigEntryState.NOT_LOADED
 
 
 async def test_async_setup_entry_error(
@@ -177,10 +178,10 @@ async def test_async_setup_entry_error(
 
 
 @pytest.mark.parametrize(
-    ["options"],
+    "options",
     [
-        [{CONF_LIGHTS: [4, 10, 12, "AAA"], CONF_EXCLUDE: [1, "BBB"]}],
-        [{CONF_LIGHTS: ["4", "10", "12", "AAA"], CONF_EXCLUDE: ["1", "BBB"]}],
+        {CONF_LIGHTS: [4, 10, 12, "AAA"], CONF_EXCLUDE: [1, "BBB"]},
+        {CONF_LIGHTS: ["4", "10", "12", "AAA"], CONF_EXCLUDE: ["1", "BBB"]},
     ],
 )
 async def test_exclude_and_light_ids(

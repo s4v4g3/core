@@ -1,129 +1,86 @@
 """Base class for IKEA TRADFRI."""
-from functools import wraps
-import logging
+from __future__ import annotations
 
-from pytradfri.error import PytradfriError
+from abc import abstractmethod
+from collections.abc import Callable, Coroutine
+from functools import wraps
+from typing import Any, cast
+
+from pytradfri.command import Command
+from pytradfri.device import Device
+from pytradfri.error import RequestError
 
 from homeassistant.core import callback
-from homeassistant.helpers.entity import Entity
+from homeassistant.helpers.device_registry import DeviceInfo
+from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
-from .const import DOMAIN
+from .const import DOMAIN, LOGGER
+from .coordinator import TradfriDeviceDataUpdateCoordinator
 
-_LOGGER = logging.getLogger(__name__)
 
-
-def handle_error(func):
+def handle_error(
+    func: Callable[[Command | list[Command]], Any]
+) -> Callable[[Command | list[Command]], Coroutine[Any, Any, None]]:
     """Handle tradfri api call error."""
 
     @wraps(func)
-    async def wrapper(command):
+    async def wrapper(command: Command | list[Command]) -> None:
         """Decorate api call."""
         try:
             await func(command)
-        except PytradfriError as err:
-            _LOGGER.error("Unable to execute command %s: %s", command, err)
+        except RequestError as err:
+            LOGGER.error("Unable to execute command %s: %s", command, err)
 
     return wrapper
 
 
-class TradfriBaseClass(Entity):
-    """Base class for IKEA TRADFRI.
+class TradfriBaseEntity(CoordinatorEntity[TradfriDeviceDataUpdateCoordinator]):
+    """Base Tradfri device."""
 
-    All devices and groups should ultimately inherit from this class.
-    """
+    _attr_has_entity_name = True
 
-    def __init__(self, device, api, gateway_id):
+    def __init__(
+        self,
+        device_coordinator: TradfriDeviceDataUpdateCoordinator,
+        gateway_id: str,
+        api: Callable[[Command | list[Command]], Any],
+    ) -> None:
         """Initialize a device."""
-        self._api = handle_error(api)
-        self._device = None
-        self._device_control = None
-        self._device_data = None
+        super().__init__(device_coordinator)
+
         self._gateway_id = gateway_id
-        self._name = None
-        self._unique_id = None
 
-        self._refresh(device)
+        self._device: Device = device_coordinator.data
 
-    @callback
-    def _async_start_observe(self, exc=None):
-        """Start observation of device."""
-        if exc:
-            self.async_write_ha_state()
-            _LOGGER.warning("Observation failed for %s", self._name, exc_info=exc)
+        self._device_id = self._device.id
+        self._api = handle_error(api)
 
-        try:
-            cmd = self._device.observe(
-                callback=self._observe_update,
-                err_callback=self._async_start_observe,
-                duration=0,
-            )
-            self.hass.async_create_task(self._api(cmd))
-        except PytradfriError as err:
-            _LOGGER.warning("Observation failed, trying again", exc_info=err)
-            self._async_start_observe()
-
-    async def async_added_to_hass(self):
-        """Start thread when added to hass."""
-        self._async_start_observe()
-
-    @property
-    def name(self):
-        """Return the display name of this device."""
-        return self._name
-
-    @property
-    def should_poll(self):
-        """No polling needed for tradfri device."""
-        return False
-
-    @property
-    def unique_id(self):
-        """Return unique ID for device."""
-        return self._unique_id
-
-    @callback
-    def _observe_update(self, device):
-        """Receive new state data for this device."""
-        self._refresh(device)
-        self.async_write_ha_state()
-
-    def _refresh(self, device):
-        """Refresh the device data."""
-        self._device = device
-        self._name = device.name
-
-
-class TradfriBaseDevice(TradfriBaseClass):
-    """Base class for a TRADFRI device.
-
-    All devices should inherit from this class.
-    """
-
-    def __init__(self, device, api, gateway_id):
-        """Initialize a device."""
-        super().__init__(device, api, gateway_id)
-        self._available = True
-
-    @property
-    def available(self):
-        """Return True if entity is available."""
-        return self._available
-
-    @property
-    def device_info(self):
-        """Return the device info."""
         info = self._device.device_info
+        self._attr_device_info = DeviceInfo(
+            identifiers={(DOMAIN, self._device_id)},
+            manufacturer=info.manufacturer,
+            model=info.model_number,
+            name=self._device.name,
+            sw_version=info.firmware_version,
+            via_device=(DOMAIN, gateway_id),
+        )
+        self._attr_unique_id = f"{gateway_id}-{self._device_id}"
 
-        return {
-            "identifiers": {(DOMAIN, self._device.id)},
-            "manufacturer": info.manufacturer,
-            "model": info.model_number,
-            "name": self._name,
-            "sw_version": info.firmware_version,
-            "via_device": (DOMAIN, self._gateway_id),
-        }
+    @abstractmethod
+    @callback
+    def _refresh(self) -> None:
+        """Refresh device data."""
 
-    def _refresh(self, device):
-        """Refresh the device data."""
-        super()._refresh(device)
-        self._available = device.reachable
+    @callback
+    def _handle_coordinator_update(self) -> None:
+        """Handle updated data from the coordinator.
+
+        Tests fails without this method.
+        """
+        self._refresh()
+        super()._handle_coordinator_update()
+
+    @property
+    def available(self) -> bool:
+        """Return if entity is available."""
+        return cast(bool, self._device.reachable) and super().available

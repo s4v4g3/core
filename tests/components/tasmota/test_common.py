@@ -18,7 +18,7 @@ from hatasmota.utils import (
     get_topic_tele_will,
 )
 
-from homeassistant.components.tasmota.const import DEFAULT_PREFIX
+from homeassistant.components.tasmota.const import DEFAULT_PREFIX, DOMAIN
 from homeassistant.const import STATE_UNAVAILABLE
 from homeassistant.helpers import device_registry as dr, entity_registry as er
 
@@ -97,6 +97,31 @@ DEFAULT_CONFIG_9_0_0_3 = {
 }
 
 
+DEFAULT_SENSOR_CONFIG = {
+    "sn": {
+        "Time": "2020-09-25T12:47:15",
+        "DHT11": {"Temperature": None},
+        "TempUnit": "C",
+    }
+}
+
+
+async def remove_device(hass, ws_client, device_id, config_entry_id=None):
+    """Remove config entry from a device."""
+    if config_entry_id is None:
+        config_entry_id = hass.config_entries.async_entries(DOMAIN)[0].entry_id
+    await ws_client.send_json(
+        {
+            "id": 5,
+            "type": "config/device_registry/remove_config_entry",
+            "config_entry_id": config_entry_id,
+            "device_id": device_id,
+        }
+    )
+    response = await ws_client.receive_json()
+    assert response["success"]
+
+
 async def help_test_availability_when_connection_lost(
     hass,
     mqtt_client_mock,
@@ -104,7 +129,7 @@ async def help_test_availability_when_connection_lost(
     domain,
     config,
     sensor_config=None,
-    entity_id="test",
+    object_id="tasmota_test",
 ):
     """Test availability after MQTT disconnection.
 
@@ -130,8 +155,8 @@ async def help_test_availability_when_connection_lost(
         get_topic_tele_will(config),
         config_get_state_online(config),
     )
-
-    state = hass.states.get(f"{domain}.{entity_id}")
+    await hass.async_block_till_done()
+    state = hass.states.get(f"{domain}.{object_id}")
     assert state.state != STATE_UNAVAILABLE
 
     # Disconnected from MQTT server -> state changed to unavailable
@@ -140,7 +165,7 @@ async def help_test_availability_when_connection_lost(
     await hass.async_block_till_done()
     await hass.async_block_till_done()
     await hass.async_block_till_done()
-    state = hass.states.get(f"{domain}.{entity_id}")
+    state = hass.states.get(f"{domain}.{object_id}")
     assert state.state == STATE_UNAVAILABLE
 
     # Reconnected to MQTT server -> state still unavailable
@@ -149,7 +174,7 @@ async def help_test_availability_when_connection_lost(
     await hass.async_block_till_done()
     await hass.async_block_till_done()
     await hass.async_block_till_done()
-    state = hass.states.get(f"{domain}.{entity_id}")
+    state = hass.states.get(f"{domain}.{object_id}")
     assert state.state == STATE_UNAVAILABLE
 
     # Receive LWT again
@@ -158,7 +183,8 @@ async def help_test_availability_when_connection_lost(
         get_topic_tele_will(config),
         config_get_state_online(config),
     )
-    state = hass.states.get(f"{domain}.{entity_id}")
+    await hass.async_block_till_done()
+    state = hass.states.get(f"{domain}.{object_id}")
     assert state.state != STATE_UNAVAILABLE
 
 
@@ -168,7 +194,7 @@ async def help_test_availability(
     domain,
     config,
     sensor_config=None,
-    entity_id="test",
+    object_id="tasmota_test",
 ):
     """Test availability.
 
@@ -188,7 +214,7 @@ async def help_test_availability(
         )
         await hass.async_block_till_done()
 
-    state = hass.states.get(f"{domain}.{entity_id}")
+    state = hass.states.get(f"{domain}.{object_id}")
     assert state.state == STATE_UNAVAILABLE
 
     async_fire_mqtt_message(
@@ -196,8 +222,8 @@ async def help_test_availability(
         get_topic_tele_will(config),
         config_get_state_online(config),
     )
-
-    state = hass.states.get(f"{domain}.{entity_id}")
+    await hass.async_block_till_done()
+    state = hass.states.get(f"{domain}.{object_id}")
     assert state.state != STATE_UNAVAILABLE
 
     async_fire_mqtt_message(
@@ -205,8 +231,8 @@ async def help_test_availability(
         get_topic_tele_will(config),
         config_get_state_offline(config),
     )
-
-    state = hass.states.get(f"{domain}.{entity_id}")
+    await hass.async_block_till_done()
+    state = hass.states.get(f"{domain}.{object_id}")
     assert state.state == STATE_UNAVAILABLE
 
 
@@ -216,7 +242,7 @@ async def help_test_availability_discovery_update(
     domain,
     config,
     sensor_config=None,
-    entity_id="test",
+    object_id="tasmota_test",
 ):
     """Test update of discovered TasmotaAvailability.
 
@@ -254,15 +280,17 @@ async def help_test_availability_discovery_update(
         )
         await hass.async_block_till_done()
 
-    state = hass.states.get(f"{domain}.{entity_id}")
+    state = hass.states.get(f"{domain}.{object_id}")
     assert state.state == STATE_UNAVAILABLE
 
     async_fire_mqtt_message(hass, availability_topic1, online1)
-    state = hass.states.get(f"{domain}.{entity_id}")
+    await hass.async_block_till_done()
+    state = hass.states.get(f"{domain}.{object_id}")
     assert state.state != STATE_UNAVAILABLE
 
     async_fire_mqtt_message(hass, availability_topic1, offline1)
-    state = hass.states.get(f"{domain}.{entity_id}")
+    await hass.async_block_till_done()
+    state = hass.states.get(f"{domain}.{object_id}")
     assert state.state == STATE_UNAVAILABLE
 
     # Change availability settings
@@ -273,12 +301,14 @@ async def help_test_availability_discovery_update(
     async_fire_mqtt_message(hass, availability_topic1, online1)
     async_fire_mqtt_message(hass, availability_topic1, online2)
     async_fire_mqtt_message(hass, availability_topic2, online1)
-    state = hass.states.get(f"{domain}.{entity_id}")
+    await hass.async_block_till_done()
+    state = hass.states.get(f"{domain}.{object_id}")
     assert state.state == STATE_UNAVAILABLE
 
     # Verify we are subscribing to the new topic
     async_fire_mqtt_message(hass, availability_topic2, online2)
-    state = hass.states.get(f"{domain}.{entity_id}")
+    await hass.async_block_till_done()
+    state = hass.states.get(f"{domain}.{object_id}")
     assert state.state != STATE_UNAVAILABLE
 
 
@@ -360,8 +390,8 @@ async def help_test_discovery_removal(
     config2,
     sensor_config1=None,
     sensor_config2=None,
-    entity_id="test",
-    name="Test",
+    object_id="tasmota_test",
+    name="Tasmota Test",
 ):
     """Test removal of discovered entity."""
     device_reg = dr.async_get(hass)
@@ -383,14 +413,14 @@ async def help_test_discovery_removal(
 
     # Verify device and entity registry entries are created
     device_entry = device_reg.async_get_device(
-        set(), {(dr.CONNECTION_NETWORK_MAC, config1[CONF_MAC])}
+        connections={(dr.CONNECTION_NETWORK_MAC, config1[CONF_MAC])}
     )
     assert device_entry is not None
-    entity_entry = entity_reg.async_get(f"{domain}.{entity_id}")
+    entity_entry = entity_reg.async_get(f"{domain}.{object_id}")
     assert entity_entry is not None
 
     # Verify state is added
-    state = hass.states.get(f"{domain}.{entity_id}")
+    state = hass.states.get(f"{domain}.{object_id}")
     assert state is not None
     assert state.name == name
 
@@ -406,14 +436,14 @@ async def help_test_discovery_removal(
 
     # Verify entity registry entries are cleared
     device_entry = device_reg.async_get_device(
-        set(), {(dr.CONNECTION_NETWORK_MAC, config2[CONF_MAC])}
+        connections={(dr.CONNECTION_NETWORK_MAC, config2[CONF_MAC])}
     )
     assert device_entry is not None
-    entity_entry = entity_reg.async_get(f"{domain}.{entity_id}")
+    entity_entry = entity_reg.async_get(f"{domain}.{object_id}")
     assert entity_entry is None
 
     # Verify state is removed
-    state = hass.states.get(f"{domain}.{entity_id}")
+    state = hass.states.get(f"{domain}.{object_id}")
     assert state is None
 
 
@@ -425,8 +455,8 @@ async def help_test_discovery_update_unchanged(
     config,
     discovery_update,
     sensor_config=None,
-    entity_id="test",
-    name="Test",
+    object_id="tasmota_test",
+    name="Tasmota Test",
 ):
     """Test update of discovered component with and without changes.
 
@@ -449,7 +479,7 @@ async def help_test_discovery_update_unchanged(
         )
         await hass.async_block_till_done()
 
-    state = hass.states.get(f"{domain}.{entity_id}")
+    state = hass.states.get(f"{domain}.{object_id}")
     assert state is not None
     assert state.name == name
 
@@ -492,7 +522,7 @@ async def help_test_discovery_device_remove(
         await hass.async_block_till_done()
 
     device = device_reg.async_get_device(
-        set(), {(dr.CONNECTION_NETWORK_MAC, config[CONF_MAC])}
+        connections={(dr.CONNECTION_NETWORK_MAC, config[CONF_MAC])}
     )
     assert device is not None
     assert entity_reg.async_get_entity_id(domain, "tasmota", unique_id)
@@ -501,14 +531,20 @@ async def help_test_discovery_device_remove(
     await hass.async_block_till_done()
 
     device = device_reg.async_get_device(
-        set(), {(dr.CONNECTION_NETWORK_MAC, config[CONF_MAC])}
+        connections={(dr.CONNECTION_NETWORK_MAC, config[CONF_MAC])}
     )
     assert device is None
     assert not entity_reg.async_get_entity_id(domain, "tasmota", unique_id)
 
 
 async def help_test_entity_id_update_subscriptions(
-    hass, mqtt_mock, domain, config, topics=None, sensor_config=None, entity_id="test"
+    hass,
+    mqtt_mock,
+    domain,
+    config,
+    topics=None,
+    sensor_config=None,
+    object_id="tasmota_test",
 ):
     """Test MQTT subscriptions are managed when entity_id is updated."""
     entity_reg = er.async_get(hass)
@@ -532,7 +568,7 @@ async def help_test_entity_id_update_subscriptions(
         topics = [get_topic_tele_state(config), get_topic_tele_will(config)]
     assert len(topics) > 0
 
-    state = hass.states.get(f"{domain}.{entity_id}")
+    state = hass.states.get(f"{domain}.{object_id}")
     assert state is not None
     assert mqtt_mock.async_subscribe.call_count == len(topics)
     for topic in topics:
@@ -540,11 +576,11 @@ async def help_test_entity_id_update_subscriptions(
     mqtt_mock.async_subscribe.reset_mock()
 
     entity_reg.async_update_entity(
-        f"{domain}.{entity_id}", new_entity_id=f"{domain}.milk"
+        f"{domain}.{object_id}", new_entity_id=f"{domain}.milk"
     )
     await hass.async_block_till_done()
 
-    state = hass.states.get(f"{domain}.{entity_id}")
+    state = hass.states.get(f"{domain}.{object_id}")
     assert state is None
 
     state = hass.states.get(f"{domain}.milk")
@@ -554,7 +590,7 @@ async def help_test_entity_id_update_subscriptions(
 
 
 async def help_test_entity_id_update_discovery_update(
-    hass, mqtt_mock, domain, config, sensor_config=None, entity_id="test"
+    hass, mqtt_mock, domain, config, sensor_config=None, object_id="tasmota_test"
 ):
     """Test MQTT discovery update after entity_id is updated."""
     entity_reg = er.async_get(hass)
@@ -575,15 +611,17 @@ async def help_test_entity_id_update_discovery_update(
         await hass.async_block_till_done()
 
     async_fire_mqtt_message(hass, topic, config_get_state_online(config))
-    state = hass.states.get(f"{domain}.{entity_id}")
+    await hass.async_block_till_done()
+    state = hass.states.get(f"{domain}.{object_id}")
     assert state.state != STATE_UNAVAILABLE
 
     async_fire_mqtt_message(hass, topic, config_get_state_offline(config))
-    state = hass.states.get(f"{domain}.{entity_id}")
+    await hass.async_block_till_done()
+    state = hass.states.get(f"{domain}.{object_id}")
     assert state.state == STATE_UNAVAILABLE
 
     entity_reg.async_update_entity(
-        f"{domain}.{entity_id}", new_entity_id=f"{domain}.milk"
+        f"{domain}.{object_id}", new_entity_id=f"{domain}.milk"
     )
     await hass.async_block_till_done()
     assert hass.states.get(f"{domain}.milk")
@@ -597,5 +635,6 @@ async def help_test_entity_id_update_discovery_update(
 
     topic = get_topic_tele_will(config)
     async_fire_mqtt_message(hass, topic, config_get_state_online(config))
+    await hass.async_block_till_done()
     state = hass.states.get(f"{domain}.milk")
     assert state.state != STATE_UNAVAILABLE

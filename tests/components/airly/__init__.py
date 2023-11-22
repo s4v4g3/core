@@ -14,6 +14,7 @@ async def init_integration(hass, aioclient_mock) -> MockConfigEntry:
     entry = MockConfigEntry(
         domain=DOMAIN,
         title="Home",
+        entry_id="3bd2acb0e4f0476d40865546d0d91921",
         unique_id="123-456",
         data={
             "api_key": "foo",
@@ -23,7 +24,7 @@ async def init_integration(hass, aioclient_mock) -> MockConfigEntry:
         },
     )
 
-    aioclient_mock.get(API_POINT_URL, text=load_fixture("airly_valid_station.json"))
+    aioclient_mock.get(API_POINT_URL, text=load_fixture("valid_station.json", "airly"))
     entry.add_to_hass(hass)
     await hass.config_entries.async_setup(entry.entry_id)
     await hass.async_block_till_done()

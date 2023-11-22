@@ -1,13 +1,13 @@
 """Support for monitoring the Syncthing instance."""
-
-import logging
-
 import aiosyncthing
 
 from homeassistant.components.sensor import SensorEntity
-from homeassistant.core import callback
+from homeassistant.config_entries import ConfigEntry
+from homeassistant.core import HomeAssistant, callback
 from homeassistant.exceptions import PlatformNotReady
+from homeassistant.helpers.device_registry import DeviceEntryType, DeviceInfo
 from homeassistant.helpers.dispatcher import async_dispatcher_connect
+from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.event import async_track_time_interval
 
 from .const import (
@@ -23,10 +23,12 @@ from .const import (
     STATE_CHANGED_RECEIVED,
 )
 
-_LOGGER = logging.getLogger(__name__)
 
-
-async def async_setup_entry(hass, config_entry, async_add_entities):
+async def async_setup_entry(
+    hass: HomeAssistant,
+    config_entry: ConfigEntry,
+    async_add_entities: AddEntitiesCallback,
+) -> None:
     """Set up the Syncthing sensors."""
     syncthing = hass.data[DOMAIN][config_entry.entry_id]
 
@@ -53,6 +55,8 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
 
 class FolderSensor(SensorEntity):
     """A Syncthing folder sensor."""
+
+    _attr_should_poll = False
 
     STATE_ATTRIBUTES = {
         "errors": "errors",
@@ -90,22 +94,20 @@ class FolderSensor(SensorEntity):
         self._folder_label = folder_label
         self._state = None
         self._unsub_timer = None
-        self._version = version
 
         self._short_server_id = server_id.split("-")[0]
+        self._attr_name = f"{self._short_server_id} {folder_id} {folder_label}"
+        self._attr_unique_id = f"{self._short_server_id}-{folder_id}"
+        self._attr_device_info = DeviceInfo(
+            entry_type=DeviceEntryType.SERVICE,
+            identifiers={(DOMAIN, self._server_id)},
+            manufacturer="Syncthing Team",
+            name=f"Syncthing ({syncthing.url})",
+            sw_version=version,
+        )
 
     @property
-    def name(self):
-        """Return the name of the sensor."""
-        return f"{self._short_server_id} {self._folder_id} {self._folder_label}"
-
-    @property
-    def unique_id(self):
-        """Return the unique id of the entity."""
-        return f"{self._short_server_id}-{self._folder_id}"
-
-    @property
-    def state(self):
+    def native_value(self):
         """Return the state of the sensor."""
         return self._state["state"]
 
@@ -127,22 +129,6 @@ class FolderSensor(SensorEntity):
     def extra_state_attributes(self):
         """Return the state attributes."""
         return self._state
-
-    @property
-    def should_poll(self):
-        """Return the polling requirement for this sensor."""
-        return False
-
-    @property
-    def device_info(self):
-        """Return device information."""
-        return {
-            "identifiers": {(DOMAIN, self._server_id)},
-            "name": f"Syncthing ({self._syncthing.url})",
-            "manufacturer": "Syncthing Team",
-            "sw_version": self._version,
-            "entry_type": "service",
-        }
 
     async def async_update_status(self):
         """Request folder status and update state."""
@@ -173,7 +159,7 @@ class FolderSensor(SensorEntity):
             self._unsub_timer()
             self._unsub_timer = None
 
-    async def async_added_to_hass(self):
+    async def async_added_to_hass(self) -> None:
         """Handle entity which will be added."""
 
         @callback

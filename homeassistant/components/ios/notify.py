@@ -1,9 +1,11 @@
 """Support for iOS push notifications."""
+from __future__ import annotations
+
+from http import HTTPStatus
 import logging
 
 import requests
 
-from homeassistant.components import ios
 from homeassistant.components.notify import (
     ATTR_DATA,
     ATTR_MESSAGE,
@@ -12,15 +14,17 @@ from homeassistant.components.notify import (
     ATTR_TITLE_DEFAULT,
     BaseNotificationService,
 )
-from homeassistant.const import HTTP_CREATED, HTTP_TOO_MANY_REQUESTS
+from homeassistant.core import HomeAssistant
+from homeassistant.helpers.typing import ConfigType, DiscoveryInfoType
 import homeassistant.util.dt as dt_util
+
+from .. import ios
 
 _LOGGER = logging.getLogger(__name__)
 
 PUSH_URL = "https://ios-push.home-assistant.io/push"
 
 
-# pylint: disable=invalid-name
 def log_rate_limits(hass, target, resp, level=20):
     """Output rate limit log line at given level."""
     rate_limits = resp["rateLimits"]
@@ -38,11 +42,15 @@ def log_rate_limits(hass, target, resp, level=20):
         rate_limits["successful"],
         rate_limits["maximum"],
         rate_limits["errors"],
-        str(resetsAtTime).split(".")[0],
+        str(resetsAtTime).split(".", maxsplit=1)[0],
     )
 
 
-def get_service(hass, config, discovery_info=None):
+def get_service(
+    hass: HomeAssistant,
+    config: ConfigType,
+    discovery_info: DiscoveryInfoType | None = None,
+) -> iOSNotificationService | None:
     """Get the iOS notification service."""
     if "notify.ios" not in hass.config.components:
         # Need this to enable requirements checking in the app.
@@ -57,7 +65,7 @@ def get_service(hass, config, discovery_info=None):
 class iOSNotificationService(BaseNotificationService):
     """Implement the notification service for iOS."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         """Initialize the service."""
 
     @property
@@ -76,9 +84,7 @@ class iOSNotificationService(BaseNotificationService):
         ):
             data[ATTR_TITLE] = kwargs.get(ATTR_TITLE)
 
-        targets = kwargs.get(ATTR_TARGET)
-
-        if not targets:
+        if not (targets := kwargs.get(ATTR_TARGET)):
             targets = ios.enabled_push_ids(self.hass)
 
         if kwargs.get(ATTR_DATA) is not None:
@@ -93,13 +99,13 @@ class iOSNotificationService(BaseNotificationService):
 
             req = requests.post(PUSH_URL, json=data, timeout=10)
 
-            if req.status_code != HTTP_CREATED:
+            if req.status_code != HTTPStatus.CREATED:
                 fallback_error = req.json().get("errorMessage", "Unknown error")
                 fallback_message = (
                     f"Internal server error, please try again later: {fallback_error}"
                 )
                 message = req.json().get("message", fallback_message)
-                if req.status_code == HTTP_TOO_MANY_REQUESTS:
+                if req.status_code == HTTPStatus.TOO_MANY_REQUESTS:
                     _LOGGER.warning(message)
                     log_rate_limits(self.hass, target, req.json(), 30)
                 else:

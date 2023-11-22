@@ -1,41 +1,182 @@
 """The kraken integration."""
 from __future__ import annotations
 
+from collections.abc import Callable
+from dataclasses import dataclass
 import logging
 
-from homeassistant.components.sensor import SensorEntity
+from homeassistant.components.sensor import (
+    SensorEntity,
+    SensorEntityDescription,
+    SensorStateClass,
+)
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback
-from homeassistant.helpers import device_registry
+from homeassistant.helpers import device_registry as dr
+from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.dispatcher import async_dispatcher_connect
-from homeassistant.helpers.update_coordinator import CoordinatorEntity
+from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from homeassistant.helpers.update_coordinator import (
+    CoordinatorEntity,
+    DataUpdateCoordinator,
+)
 
 from . import KrakenData
 from .const import (
     CONF_TRACKED_ASSET_PAIRS,
     DISPATCH_CONFIG_UPDATED,
     DOMAIN,
-    SENSOR_TYPES,
+    KrakenResponse,
 )
 
 _LOGGER = logging.getLogger(__name__)
 
 
-async def async_setup_entry(hass, config_entry, async_add_entities):
+@dataclass
+class KrakenRequiredKeysMixin:
+    """Mixin for required keys."""
+
+    value_fn: Callable[[DataUpdateCoordinator[KrakenResponse], str], float | int]
+
+
+@dataclass
+class KrakenSensorEntityDescription(SensorEntityDescription, KrakenRequiredKeysMixin):
+    """Describes Kraken sensor entity."""
+
+
+SENSOR_TYPES: tuple[KrakenSensorEntityDescription, ...] = (
+    KrakenSensorEntityDescription(
+        key="ask",
+        translation_key="ask",
+        value_fn=lambda x, y: x.data[y]["ask"][0],
+    ),
+    KrakenSensorEntityDescription(
+        key="ask_volume",
+        translation_key="ask_volume",
+        value_fn=lambda x, y: x.data[y]["ask"][1],
+        entity_registry_enabled_default=False,
+    ),
+    KrakenSensorEntityDescription(
+        key="bid",
+        translation_key="bid",
+        value_fn=lambda x, y: x.data[y]["bid"][0],
+    ),
+    KrakenSensorEntityDescription(
+        key="bid_volume",
+        translation_key="bid_volume",
+        value_fn=lambda x, y: x.data[y]["bid"][1],
+        entity_registry_enabled_default=False,
+    ),
+    KrakenSensorEntityDescription(
+        key="volume_today",
+        translation_key="volume_today",
+        value_fn=lambda x, y: x.data[y]["volume"][0],
+        entity_registry_enabled_default=False,
+    ),
+    KrakenSensorEntityDescription(
+        key="volume_last_24h",
+        translation_key="volume_last_24h",
+        value_fn=lambda x, y: x.data[y]["volume"][1],
+        entity_registry_enabled_default=False,
+    ),
+    KrakenSensorEntityDescription(
+        key="volume_weighted_average_today",
+        translation_key="volume_weighted_average_today",
+        value_fn=lambda x, y: x.data[y]["volume_weighted_average"][0],
+        entity_registry_enabled_default=False,
+    ),
+    KrakenSensorEntityDescription(
+        key="volume_weighted_average_last_24h",
+        translation_key="volume_weighted_average_last_24h",
+        value_fn=lambda x, y: x.data[y]["volume_weighted_average"][1],
+        entity_registry_enabled_default=False,
+    ),
+    KrakenSensorEntityDescription(
+        key="number_of_trades_today",
+        translation_key="number_of_trades_today",
+        value_fn=lambda x, y: x.data[y]["number_of_trades"][0],
+        entity_registry_enabled_default=False,
+    ),
+    KrakenSensorEntityDescription(
+        key="number_of_trades_last_24h",
+        translation_key="number_of_trades_last_24h",
+        value_fn=lambda x, y: x.data[y]["number_of_trades"][1],
+        entity_registry_enabled_default=False,
+    ),
+    KrakenSensorEntityDescription(
+        key="last_trade_closed",
+        translation_key="last_trade_closed",
+        value_fn=lambda x, y: x.data[y]["last_trade_closed"][0],
+        entity_registry_enabled_default=False,
+    ),
+    KrakenSensorEntityDescription(
+        key="low_today",
+        translation_key="low_today",
+        value_fn=lambda x, y: x.data[y]["low"][0],
+    ),
+    KrakenSensorEntityDescription(
+        key="low_last_24h",
+        translation_key="low_last_24h",
+        value_fn=lambda x, y: x.data[y]["low"][1],
+        entity_registry_enabled_default=False,
+    ),
+    KrakenSensorEntityDescription(
+        key="high_today",
+        translation_key="high_today",
+        value_fn=lambda x, y: x.data[y]["high"][0],
+    ),
+    KrakenSensorEntityDescription(
+        key="high_last_24h",
+        translation_key="high_last_24h",
+        value_fn=lambda x, y: x.data[y]["high"][1],
+        entity_registry_enabled_default=False,
+    ),
+    KrakenSensorEntityDescription(
+        key="opening_price_today",
+        translation_key="opening_price_today",
+        value_fn=lambda x, y: x.data[y]["opening_price"],
+        entity_registry_enabled_default=False,
+    ),
+)
+
+
+async def async_setup_entry(
+    hass: HomeAssistant,
+    config_entry: ConfigEntry,
+    async_add_entities: AddEntitiesCallback,
+) -> None:
     """Add kraken entities from a config_entry."""
+
+    def _async_add_kraken_sensors(tracked_asset_pairs: list[str]) -> None:
+        entities = []
+        for tracked_asset_pair in tracked_asset_pairs:
+            entities.extend(
+                [
+                    KrakenSensor(
+                        hass.data[DOMAIN],
+                        tracked_asset_pair,
+                        description,
+                    )
+                    for description in SENSOR_TYPES
+                ]
+            )
+        async_add_entities(entities, True)
+
+    _async_add_kraken_sensors(config_entry.options[CONF_TRACKED_ASSET_PAIRS])
 
     @callback
     def async_update_sensors(hass: HomeAssistant, config_entry: ConfigEntry) -> None:
-        dev_reg = device_registry.async_get(hass)
+        """Add or remove sensors for configured tracked asset pairs."""
+        dev_reg = dr.async_get(hass)
 
         existing_devices = {
             device.name: device.id
-            for device in device_registry.async_entries_for_config_entry(
+            for device in dr.async_entries_for_config_entry(
                 dev_reg, config_entry.entry_id
             )
         }
 
-        sensors = []
+        asset_pairs_to_add = []
         for tracked_asset_pair in config_entry.options[CONF_TRACKED_ASSET_PAIRS]:
             # Only create new devices
             if (
@@ -43,23 +184,14 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
             ) in existing_devices:
                 existing_devices.pop(device_name)
             else:
-                for sensor_type in SENSOR_TYPES:
-                    sensors.append(
-                        KrakenSensor(
-                            hass.data[DOMAIN],
-                            tracked_asset_pair,
-                            sensor_type,
-                        )
-                    )
-        async_add_entities(sensors, True)
+                asset_pairs_to_add.append(tracked_asset_pair)
+        _async_add_kraken_sensors(asset_pairs_to_add)
 
         # Remove devices for asset pairs which are no longer tracked
         for device_id in existing_devices.values():
             dev_reg.async_remove_device(device_id)
 
-    async_update_sensors(hass, config_entry)
-
-    hass.data[DOMAIN].unsub_listeners.append(
+    config_entry.async_on_unload(
         async_dispatcher_connect(
             hass,
             DISPATCH_CONFIG_UPDATED,
@@ -68,71 +200,69 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
     )
 
 
-class KrakenSensor(CoordinatorEntity, SensorEntity):
+class KrakenSensor(
+    CoordinatorEntity[DataUpdateCoordinator[KrakenResponse | None]], SensorEntity
+):
     """Define a Kraken sensor."""
+
+    entity_description: KrakenSensorEntityDescription
+
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_has_entity_name = True
 
     def __init__(
         self,
         kraken_data: KrakenData,
         tracked_asset_pair: str,
-        sensor_type: dict[str, bool],
+        description: KrakenSensorEntityDescription,
     ) -> None:
         """Initialize."""
+        assert kraken_data.coordinator is not None
         super().__init__(kraken_data.coordinator)
+        self.entity_description = description
         self.tracked_asset_pair_wsname = kraken_data.tradable_asset_pairs[
             tracked_asset_pair
         ]
-        self._source_asset = tracked_asset_pair.split("/")[0]
         self._target_asset = tracked_asset_pair.split("/")[1]
-        self._sensor_type = sensor_type["name"]
-        self._enabled_by_default = sensor_type["enabled_by_default"]
-        self._unit_of_measurement = self._target_asset
-        self._device_name = f"{self._source_asset} {self._target_asset}"
-        self._name = "_".join(
+        if "number_of" not in description.key:
+            self._attr_native_unit_of_measurement = self._target_asset
+        self._device_name = create_device_name(tracked_asset_pair)
+        self._attr_unique_id = "_".join(
             [
                 tracked_asset_pair.split("/")[0],
                 tracked_asset_pair.split("/")[1],
-                sensor_type["name"],
+                description.key,
             ]
-        )
+        ).lower()
         self._received_data_at_least_once = False
         self._available = True
-        self._state = None
 
-    @property
-    def entity_registry_enabled_default(self):
-        """Return if the entity should be enabled when first added to the entity registry."""
-        return self._enabled_by_default
-
-    @property
-    def name(self):
-        """Return the name."""
-        return self._name
-
-    @property
-    def unique_id(self):
-        """Set unique_id for sensor."""
-        return self._name.lower()
-
-    @property
-    def state(self):
-        """Return the state."""
-        return self._state
+        self._attr_device_info = DeviceInfo(
+            configuration_url="https://www.kraken.com/",
+            entry_type=dr.DeviceEntryType.SERVICE,
+            identifiers={(DOMAIN, "_".join(self._device_name.split(" ")))},
+            manufacturer="Kraken.com",
+            name=self._device_name,
+        )
 
     async def async_added_to_hass(self) -> None:
         """Handle entity which will be added."""
         await super().async_added_to_hass()
         self._update_internal_state()
 
-    def _handle_coordinator_update(self):
+    def _handle_coordinator_update(self) -> None:
         self._update_internal_state()
         super()._handle_coordinator_update()
 
-    def _update_internal_state(self):
+    def _update_internal_state(self) -> None:
+        if not self.coordinator.data:
+            return
         try:
-            self._state = self._try_get_state()
-            self._received_data_at_least_once = True  # Received data at least one time.
-        except TypeError:
+            self._attr_native_value = self.entity_description.value_fn(
+                self.coordinator, self.tracked_asset_pair_wsname  # type: ignore[arg-type]
+            )
+            self._received_data_at_least_once = True
+        except KeyError:
             if self._received_data_at_least_once:
                 if self._available:
                     _LOGGER.warning(
@@ -141,55 +271,8 @@ class KrakenSensor(CoordinatorEntity, SensorEntity):
                     )
                     self._available = False
 
-    def _try_get_state(self) -> str:
-        """Try to get the state or return a TypeError."""
-        if self._sensor_type == "last_trade_closed":
-            return self.coordinator.data[self.tracked_asset_pair_wsname][
-                "last_trade_closed"
-            ][0]
-        if self._sensor_type == "ask":
-            return self.coordinator.data[self.tracked_asset_pair_wsname]["ask"][0]
-        if self._sensor_type == "ask_volume":
-            return self.coordinator.data[self.tracked_asset_pair_wsname]["ask"][1]
-        if self._sensor_type == "bid":
-            return self.coordinator.data[self.tracked_asset_pair_wsname]["bid"][0]
-        if self._sensor_type == "bid_volume":
-            return self.coordinator.data[self.tracked_asset_pair_wsname]["bid"][1]
-        if self._sensor_type == "volume_today":
-            return self.coordinator.data[self.tracked_asset_pair_wsname]["volume"][0]
-        if self._sensor_type == "volume_last_24h":
-            return self.coordinator.data[self.tracked_asset_pair_wsname]["volume"][1]
-        if self._sensor_type == "volume_weighted_average_today":
-            return self.coordinator.data[self.tracked_asset_pair_wsname][
-                "volume_weighted_average"
-            ][0]
-        if self._sensor_type == "volume_weighted_average_last_24h":
-            return self.coordinator.data[self.tracked_asset_pair_wsname][
-                "volume_weighted_average"
-            ][1]
-        if self._sensor_type == "number_of_trades_today":
-            return self.coordinator.data[self.tracked_asset_pair_wsname][
-                "number_of_trades"
-            ][0]
-        if self._sensor_type == "number_of_trades_last_24h":
-            return self.coordinator.data[self.tracked_asset_pair_wsname][
-                "number_of_trades"
-            ][1]
-        if self._sensor_type == "low_today":
-            return self.coordinator.data[self.tracked_asset_pair_wsname]["low"][0]
-        if self._sensor_type == "low_last_24h":
-            return self.coordinator.data[self.tracked_asset_pair_wsname]["low"][1]
-        if self._sensor_type == "high_today":
-            return self.coordinator.data[self.tracked_asset_pair_wsname]["high"][0]
-        if self._sensor_type == "high_last_24h":
-            return self.coordinator.data[self.tracked_asset_pair_wsname]["high"][1]
-        if self._sensor_type == "opening_price_today":
-            return self.coordinator.data[self.tracked_asset_pair_wsname][
-                "opening_price"
-            ]
-
     @property
-    def icon(self):
+    def icon(self) -> str:
         """Return the icon."""
         if self._target_asset == "EUR":
             return "mdi:currency-eur"
@@ -204,27 +287,9 @@ class KrakenSensor(CoordinatorEntity, SensorEntity):
         return "mdi:cash"
 
     @property
-    def unit_of_measurement(self):
-        """Return the unit the value is expressed in."""
-        if "number_of" not in self._sensor_type:
-            return self._unit_of_measurement
-        return None
-
-    @property
-    def available(self):
+    def available(self) -> bool:
         """Could the api be accessed during the last update call."""
         return self._available and self.coordinator.last_update_success
-
-    @property
-    def device_info(self) -> dict:
-        """Return a device description for device registry."""
-
-        return {
-            "identifiers": {(DOMAIN, f"{self._source_asset}_{self._target_asset}")},
-            "name": self._device_name,
-            "manufacturer": "Kraken.com",
-            "entry_type": "service",
-        }
 
 
 def create_device_name(tracked_asset_pair: str) -> str:

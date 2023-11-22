@@ -1,15 +1,27 @@
 """Deprecation helpers for Home Assistant."""
 from __future__ import annotations
 
+from collections.abc import Callable
+from contextlib import suppress
 import functools
 import inspect
 import logging
-from typing import Any, Callable
+from typing import Any, ParamSpec, TypeVar
 
-from ..helpers.frame import MissingIntegrationFrame, get_integration_frame
+from homeassistant.core import HomeAssistant, async_get_hass
+from homeassistant.exceptions import HomeAssistantError
+from homeassistant.loader import async_suggest_report_issue
+
+from .frame import MissingIntegrationFrame, get_integration_frame
+
+_ObjectT = TypeVar("_ObjectT", bound=object)
+_R = TypeVar("_R")
+_P = ParamSpec("_P")
 
 
-def deprecated_substitute(substitute_name: str) -> Callable[..., Callable]:
+def deprecated_substitute(
+    substitute_name: str,
+) -> Callable[[Callable[[_ObjectT], Any]], Callable[[_ObjectT], Any]]:
     """Help migrate properties to new names.
 
     When a property is added to replace an older property, this decorator can
@@ -18,10 +30,10 @@ def deprecated_substitute(substitute_name: str) -> Callable[..., Callable]:
     warning will be issued alerting the user of the impending change.
     """
 
-    def decorator(func: Callable) -> Callable:
+    def decorator(func: Callable[[_ObjectT], Any]) -> Callable[[_ObjectT], Any]:
         """Decorate function as deprecated."""
 
-        def func_wrapper(self: Callable) -> Any:
+        def func_wrapper(self: _ObjectT) -> Any:
             """Wrap for the original function."""
             if hasattr(self, substitute_name):
                 # If this platform is still using the old property, issue
@@ -31,8 +43,10 @@ def deprecated_substitute(substitute_name: str) -> Callable[..., Callable]:
                 if not warnings.get(module_name):
                     logger = logging.getLogger(module_name)
                     logger.warning(
-                        "'%s' is deprecated. Please rename '%s' to "
-                        "'%s' in '%s' to ensure future support.",
+                        (
+                            "'%s' is deprecated. Please rename '%s' to "
+                            "'%s' in '%s' to ensure future support."
+                        ),
                         substitute_name,
                         substitute_name,
                         func.__name__,
@@ -70,8 +84,10 @@ def get_deprecated(
 
         logger = logging.getLogger(module_name)
         logger.warning(
-            "'%s' is deprecated. Please rename '%s' to '%s' in your "
-            "configuration file.",
+            (
+                "'%s' is deprecated. Please rename '%s' to '%s' in your "
+                "configuration file."
+            ),
             old_name,
             old_name,
             new_name,
@@ -80,41 +96,80 @@ def get_deprecated(
     return config.get(new_name, default)
 
 
-def deprecated_function(replacement: str) -> Callable[..., Callable]:
-    """Mark function as deprecated and provide a replacement function to be used instead."""
+def deprecated_class(
+    replacement: str,
+) -> Callable[[Callable[_P, _R]], Callable[_P, _R]]:
+    """Mark class as deprecated and provide a replacement class to be used instead."""
 
-    def deprecated_decorator(func: Callable) -> Callable:
+    def deprecated_decorator(cls: Callable[_P, _R]) -> Callable[_P, _R]:
+        """Decorate class as deprecated."""
+
+        @functools.wraps(cls)
+        def deprecated_cls(*args: _P.args, **kwargs: _P.kwargs) -> _R:
+            """Wrap for the original class."""
+            _print_deprecation_warning(cls, replacement, "class")
+            return cls(*args, **kwargs)
+
+        return deprecated_cls
+
+    return deprecated_decorator
+
+
+def deprecated_function(
+    replacement: str,
+) -> Callable[[Callable[_P, _R]], Callable[_P, _R]]:
+    """Mark function as deprecated and provide a replacement to be used instead."""
+
+    def deprecated_decorator(func: Callable[_P, _R]) -> Callable[_P, _R]:
         """Decorate function as deprecated."""
 
         @functools.wraps(func)
-        def deprecated_func(*args: tuple, **kwargs: dict[str, Any]) -> Any:
+        def deprecated_func(*args: _P.args, **kwargs: _P.kwargs) -> _R:
             """Wrap for the original function."""
-            logger = logging.getLogger(func.__module__)
-            try:
-                _, integration, path = get_integration_frame()
-                if path == "custom_components/":
-                    logger.warning(
-                        "%s was called from %s, this is a deprecated function. Use %s instead, please report this to the maintainer of %s",
-                        func.__name__,
-                        integration,
-                        replacement,
-                        integration,
-                    )
-                else:
-                    logger.warning(
-                        "%s was called from %s, this is a deprecated function. Use %s instead",
-                        func.__name__,
-                        integration,
-                        replacement,
-                    )
-            except MissingIntegrationFrame:
-                logger.warning(
-                    "%s is a deprecated function. Use %s instead",
-                    func.__name__,
-                    replacement,
-                )
+            _print_deprecation_warning(func, replacement, "function")
             return func(*args, **kwargs)
 
         return deprecated_func
 
     return deprecated_decorator
+
+
+def _print_deprecation_warning(obj: Any, replacement: str, description: str) -> None:
+    logger = logging.getLogger(obj.__module__)
+    try:
+        integration_frame = get_integration_frame()
+        if integration_frame.custom_integration:
+            hass: HomeAssistant | None = None
+            with suppress(HomeAssistantError):
+                hass = async_get_hass()
+            report_issue = async_suggest_report_issue(
+                hass,
+                integration_domain=integration_frame.integration,
+                module=integration_frame.module,
+            )
+            logger.warning(
+                (
+                    "%s was called from %s, this is a deprecated %s. Use %s instead,"
+                    " please %s"
+                ),
+                obj.__name__,
+                integration_frame.integration,
+                description,
+                replacement,
+                report_issue,
+            )
+        else:
+            logger.warning(
+                "%s was called from %s, this is a deprecated %s. Use %s instead",
+                obj.__name__,
+                integration_frame.integration,
+                description,
+                replacement,
+            )
+    except MissingIntegrationFrame:
+        logger.warning(
+            "%s is a deprecated %s. Use %s instead",
+            obj.__name__,
+            description,
+            replacement,
+        )

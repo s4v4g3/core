@@ -1,21 +1,51 @@
 """Support for Hydrawise sprinkler sensors."""
-import logging
+from __future__ import annotations
 
+from datetime import datetime
+
+from pydrawise.schema import Zone
 import voluptuous as vol
 
-from homeassistant.components.sensor import PLATFORM_SCHEMA, SensorEntity
-from homeassistant.const import CONF_MONITORED_CONDITIONS
+from homeassistant.components.sensor import (
+    PLATFORM_SCHEMA,
+    SensorDeviceClass,
+    SensorEntity,
+    SensorEntityDescription,
+)
+from homeassistant.config_entries import ConfigEntry
+from homeassistant.const import CONF_MONITORED_CONDITIONS, UnitOfTime
+from homeassistant.core import HomeAssistant
 import homeassistant.helpers.config_validation as cv
-from homeassistant.util import dt
+from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from homeassistant.helpers.typing import ConfigType, DiscoveryInfoType
+from homeassistant.util import dt as dt_util
 
-from . import DATA_HYDRAWISE, DEVICE_MAP, DEVICE_MAP_INDEX, SENSORS, HydrawiseEntity
+from .const import DOMAIN
+from .coordinator import HydrawiseDataUpdateCoordinator
+from .entity import HydrawiseEntity
 
-_LOGGER = logging.getLogger(__name__)
+SENSOR_TYPES: tuple[SensorEntityDescription, ...] = (
+    SensorEntityDescription(
+        key="next_cycle",
+        translation_key="next_cycle",
+        device_class=SensorDeviceClass.TIMESTAMP,
+    ),
+    SensorEntityDescription(
+        key="watering_time",
+        translation_key="watering_time",
+        icon="mdi:water-pump",
+        native_unit_of_measurement=UnitOfTime.MINUTES,
+    ),
+)
 
+SENSOR_KEYS: list[str] = [desc.key for desc in SENSOR_TYPES]
+
+# Deprecated since Home Assistant 2023.10.0
+# Can be removed completely in 2024.4.0
 PLATFORM_SCHEMA = PLATFORM_SCHEMA.extend(
     {
-        vol.Optional(CONF_MONITORED_CONDITIONS, default=SENSORS): vol.All(
-            cv.ensure_list, [vol.In(SENSORS)]
+        vol.Optional(CONF_MONITORED_CONDITIONS, default=SENSOR_KEYS): vol.All(
+            cv.ensure_list, [vol.In(SENSOR_KEYS)]
         )
     }
 )
@@ -24,46 +54,50 @@ TWO_YEAR_SECONDS = 60 * 60 * 24 * 365 * 2
 WATERING_TIME_ICON = "mdi:water-pump"
 
 
-def setup_platform(hass, config, add_entities, discovery_info=None):
+def setup_platform(
+    hass: HomeAssistant,
+    config: ConfigType,
+    add_entities: AddEntitiesCallback,
+    discovery_info: DiscoveryInfoType | None = None,
+) -> None:
     """Set up a sensor for a Hydrawise device."""
-    hydrawise = hass.data[DATA_HYDRAWISE].data
+    # We don't need to trigger import flow from here as it's triggered from `__init__.py`
+    return  # pragma: no cover
 
-    sensors = []
-    for sensor_type in config.get(CONF_MONITORED_CONDITIONS):
-        for zone in hydrawise.relays:
-            sensors.append(HydrawiseSensor(zone, sensor_type))
 
-    add_entities(sensors, True)
+async def async_setup_entry(
+    hass: HomeAssistant,
+    config_entry: ConfigEntry,
+    async_add_entities: AddEntitiesCallback,
+) -> None:
+    """Set up the Hydrawise sensor platform."""
+    coordinator: HydrawiseDataUpdateCoordinator = hass.data[DOMAIN][
+        config_entry.entry_id
+    ]
+    async_add_entities(
+        HydrawiseSensor(coordinator, description, controller, zone)
+        for controller in coordinator.data.controllers
+        for zone in controller.zones
+        for description in SENSOR_TYPES
+    )
 
 
 class HydrawiseSensor(HydrawiseEntity, SensorEntity):
     """A sensor implementation for Hydrawise device."""
 
-    @property
-    def state(self):
-        """Return the state of the sensor."""
-        return self._state
+    zone: Zone
 
-    @property
-    def unit_of_measurement(self):
-        """Return the units of measurement."""
-        return DEVICE_MAP[self._sensor_type][
-            DEVICE_MAP_INDEX.index("UNIT_OF_MEASURE_INDEX")
-        ]
-
-    def update(self):
-        """Get the latest data and updates the states."""
-        mydata = self.hass.data[DATA_HYDRAWISE].data
-        _LOGGER.debug("Updating Hydrawise sensor: %s", self._name)
-        relay_data = mydata.relays[self.data["relay"] - 1]
-        if self._sensor_type == "watering_time":
-            if relay_data["timestr"] == "Now":
-                self._state = int(relay_data["run"] / 60)
+    def _update_attrs(self) -> None:
+        """Update state attributes."""
+        if self.entity_description.key == "watering_time":
+            if (current_run := self.zone.scheduled_runs.current_run) is not None:
+                self._attr_native_value = int(
+                    current_run.remaining_time.total_seconds() / 60
+                )
             else:
-                self._state = 0
-        else:  # _sensor_type == 'next_cycle'
-            next_cycle = min(relay_data["time"], TWO_YEAR_SECONDS)
-            _LOGGER.debug("New cycle time: %s", next_cycle)
-            self._state = dt.utc_from_timestamp(
-                dt.as_timestamp(dt.now()) + next_cycle
-            ).isoformat()
+                self._attr_native_value = 0
+        elif self.entity_description.key == "next_cycle":
+            if (next_run := self.zone.scheduled_runs.next_run) is not None:
+                self._attr_native_value = dt_util.as_utc(next_run.start_time)
+            else:
+                self._attr_native_value = datetime.max.replace(tzinfo=dt_util.UTC)

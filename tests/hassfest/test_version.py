@@ -13,7 +13,7 @@ from script.hassfest.model import Integration
 def integration():
     """Fixture for hassfest integration model."""
     integration = Integration("")
-    integration.manifest = {
+    integration._manifest = {
         "domain": "test",
         "documentation": "https://example.com",
         "name": "test",
@@ -22,16 +22,15 @@ def integration():
     return integration
 
 
-def test_validate_version_no_key(integration: Integration):
+def test_validate_version_no_key(integration: Integration) -> None:
     """Test validate version with no key."""
     validate_version(integration)
-    assert (
-        "No 'version' key in the manifest file. This will cause a future version of Home Assistant to block this integration."
-        in [x.error for x in integration.errors]
-    )
+    assert "No 'version' key in the manifest file." in [
+        x.error for x in integration.errors
+    ]
 
 
-def test_validate_custom_integration_manifest(integration: Integration):
+def test_validate_custom_integration_manifest(integration: Integration) -> None:
     """Test validate custom integration manifest."""
 
     with pytest.raises(vol.Invalid):

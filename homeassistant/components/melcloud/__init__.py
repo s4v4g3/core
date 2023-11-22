@@ -7,16 +7,18 @@ import logging
 from typing import Any
 
 from aiohttp import ClientConnectionError
-from async_timeout import timeout
 from pymelcloud import Device, get_devices
+from pymelcloud.atw_device import Zone
 import voluptuous as vol
 
 from homeassistant.config_entries import SOURCE_IMPORT, ConfigEntry
-from homeassistant.const import CONF_TOKEN, CONF_USERNAME
+from homeassistant.const import CONF_TOKEN, CONF_USERNAME, Platform
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryNotReady
+from homeassistant.helpers.aiohttp_client import async_get_clientsession
 import homeassistant.helpers.config_validation as cv
-from homeassistant.helpers.device_registry import CONNECTION_NETWORK_MAC
+from homeassistant.helpers.device_registry import CONNECTION_NETWORK_MAC, DeviceInfo
+from homeassistant.helpers.typing import ConfigType
 from homeassistant.util import Throttle
 
 from .const import DOMAIN
@@ -25,7 +27,7 @@ _LOGGER = logging.getLogger(__name__)
 
 MIN_TIME_BETWEEN_UPDATES = timedelta(seconds=60)
 
-PLATFORMS = ["climate", "sensor", "water_heater"]
+PLATFORMS = [Platform.CLIMATE, Platform.SENSOR, Platform.WATER_HEATER]
 
 CONF_LANGUAGE = "language"
 CONFIG_SCHEMA = vol.Schema(
@@ -44,7 +46,7 @@ CONFIG_SCHEMA = vol.Schema(
 )
 
 
-async def async_setup(hass: HomeAssistant, config: ConfigEntry):
+async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     """Establish connection with MELCloud."""
     if DOMAIN not in config:
         return True
@@ -61,16 +63,16 @@ async def async_setup(hass: HomeAssistant, config: ConfigEntry):
     return True
 
 
-async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
+async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Establish connection with MELClooud."""
     conf = entry.data
     mel_devices = await mel_devices_setup(hass, conf[CONF_TOKEN])
     hass.data.setdefault(DOMAIN, {}).update({entry.entry_id: mel_devices})
-    hass.config_entries.async_setup_platforms(entry, PLATFORMS)
+    await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     return True
 
 
-async def async_unload_entry(hass, config_entry):
+async def async_unload_entry(hass: HomeAssistant, config_entry: ConfigEntry) -> bool:
     """Unload a config entry."""
     unload_ok = await hass.config_entries.async_unload_platforms(
         config_entry, PLATFORMS
@@ -84,7 +86,7 @@ async def async_unload_entry(hass, config_entry):
 class MelCloudDevice:
     """MELCloud Device instance."""
 
-    def __init__(self, device: Device):
+    def __init__(self, device: Device) -> None:
         """Construct a device wrapper."""
         self.device = device
         self.name = device.name
@@ -125,27 +127,43 @@ class MelCloudDevice:
         return self.device.building_id
 
     @property
-    def device_info(self):
+    def device_info(self) -> DeviceInfo:
         """Return a device description for device registry."""
-        _device_info = {
-            "connections": {(CONNECTION_NETWORK_MAC, self.device.mac)},
-            "identifiers": {(DOMAIN, f"{self.device.mac}-{self.device.serial}")},
-            "manufacturer": "Mitsubishi Electric",
-            "name": self.name,
-        }
-        unit_infos = self.device.units
-        if unit_infos is not None:
-            _device_info["model"] = ", ".join(
-                [x["model"] for x in unit_infos if x["model"]]
-            )
-        return _device_info
+        model = None
+        if (unit_infos := self.device.units) is not None:
+            model = ", ".join([x["model"] for x in unit_infos if x["model"]])
+        return DeviceInfo(
+            connections={(CONNECTION_NETWORK_MAC, self.device.mac)},
+            identifiers={(DOMAIN, f"{self.device.mac}-{self.device.serial}")},
+            manufacturer="Mitsubishi Electric",
+            model=model,
+            name=self.name,
+        )
+
+    def zone_device_info(self, zone: Zone) -> DeviceInfo:
+        """Return a zone device description for device registry."""
+        dev = self.device
+        return DeviceInfo(
+            identifiers={(DOMAIN, f"{dev.mac}-{dev.serial}-{zone.zone_index}")},
+            manufacturer="Mitsubishi Electric",
+            model="ATW zone device",
+            name=f"{self.name} {zone.name}",
+            via_device=(DOMAIN, f"{dev.mac}-{dev.serial}"),
+        )
+
+    @property
+    def daily_energy_consumed(self) -> float | None:
+        """Return energy consumed during the current day in kWh."""
+        return self.device.daily_energy_consumed
 
 
-async def mel_devices_setup(hass, token) -> list[MelCloudDevice]:
+async def mel_devices_setup(
+    hass: HomeAssistant, token: str
+) -> dict[str, list[MelCloudDevice]]:
     """Query connected devices from MELCloud."""
-    session = hass.helpers.aiohttp_client.async_get_clientsession()
+    session = async_get_clientsession(hass)
     try:
-        with timeout(10):
+        async with asyncio.timeout(10):
             all_devices = await get_devices(
                 token,
                 session,
@@ -155,7 +173,7 @@ async def mel_devices_setup(hass, token) -> list[MelCloudDevice]:
     except (asyncio.TimeoutError, ClientConnectionError) as ex:
         raise ConfigEntryNotReady() from ex
 
-    wrapped_devices = {}
+    wrapped_devices: dict[str, list[MelCloudDevice]] = {}
     for device_type, devices in all_devices.items():
         wrapped_devices[device_type] = [MelCloudDevice(device) for device in devices]
     return wrapped_devices

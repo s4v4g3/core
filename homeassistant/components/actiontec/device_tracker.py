@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import logging
-import telnetlib
+import telnetlib  # pylint: disable=deprecated-module
 from typing import Final
 
 import voluptuous as vol
@@ -40,7 +40,7 @@ def get_scanner(
 
 
 class ActiontecDeviceScanner(DeviceScanner):
-    """This class queries an actiontec router for connected devices."""
+    """Class which queries an actiontec router for connected devices."""
 
     def __init__(self, config: ConfigType) -> None:
         """Initialize the scanner."""
@@ -57,7 +57,7 @@ class ActiontecDeviceScanner(DeviceScanner):
         self._update_info()
         return [client.mac_address for client in self.last_results]
 
-    def get_device_name(self, device: str) -> str | None:  # type: ignore[override]
+    def get_device_name(self, device: str) -> str | None:
         """Return the name of the given device or None if we don't know."""
         for client in self.last_results:
             if client.mac_address == device:
@@ -73,8 +73,7 @@ class ActiontecDeviceScanner(DeviceScanner):
         if not self.success_init:
             return False
 
-        actiontec_data = self.get_actiontec_data()
-        if actiontec_data is None:
+        if (actiontec_data := self.get_actiontec_data()) is None:
             return False
         self.last_results = [
             device for device in actiontec_data if device.timevalid > -60

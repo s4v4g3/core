@@ -1,14 +1,21 @@
 """The test for the Trend sensor platform."""
 from datetime import timedelta
-from os import path
 from unittest.mock import patch
 
+import pytest
+
 from homeassistant import config as hass_config, setup
-from homeassistant.components.trend import DOMAIN
-from homeassistant.const import SERVICE_RELOAD
+from homeassistant.components.trend.const import DOMAIN
+from homeassistant.const import SERVICE_RELOAD, STATE_UNKNOWN
+from homeassistant.core import HomeAssistant, State
 import homeassistant.util.dt as dt_util
 
-from tests.common import assert_setup_component, get_test_home_assistant
+from tests.common import (
+    assert_setup_component,
+    get_fixture_path,
+    get_test_home_assistant,
+    mock_restore_cache,
+)
 
 
 class TestTrendBinarySensor:
@@ -304,7 +311,7 @@ class TestTrendBinarySensor:
         self.hass.states.set("sensor.test_state", "Numeric")
         self.hass.block_till_done()
         state = self.hass.states.get("binary_sensor.test_trend_sensor")
-        assert state.state == "off"
+        assert state.state == STATE_UNKNOWN
 
     def test_missing_attribute(self):
         """Test attribute down trend."""
@@ -330,7 +337,7 @@ class TestTrendBinarySensor:
         self.hass.states.set("sensor.test_state", "State", {"attr": "1"})
         self.hass.block_till_done()
         state = self.hass.states.get("binary_sensor.test_trend_sensor")
-        assert state.state == "off"
+        assert state.state == STATE_UNKNOWN
 
     def test_invalid_name_does_not_create(self):
         """Test invalid name."""
@@ -347,7 +354,7 @@ class TestTrendBinarySensor:
                     }
                 },
             )
-        assert self.hass.states.all() == []
+        assert self.hass.states.all("binary_sensor") == []
 
     def test_invalid_sensor_does_not_create(self):
         """Test invalid sensor."""
@@ -364,7 +371,7 @@ class TestTrendBinarySensor:
                     }
                 },
             )
-        assert self.hass.states.all() == []
+        assert self.hass.states.all("binary_sensor") == []
 
     def test_no_sensors_does_not_create(self):
         """Test no sensors."""
@@ -372,10 +379,10 @@ class TestTrendBinarySensor:
             assert setup.setup_component(
                 self.hass, "binary_sensor", {"binary_sensor": {"platform": "trend"}}
             )
-        assert self.hass.states.all() == []
+        assert self.hass.states.all("binary_sensor") == []
 
 
-async def test_reload(hass):
+async def test_reload(hass: HomeAssistant) -> None:
     """Verify we can reload trend sensors."""
     hass.states.async_set("sensor.test_state", 1234)
 
@@ -395,11 +402,7 @@ async def test_reload(hass):
 
     assert hass.states.get("binary_sensor.test_trend_sensor")
 
-    yaml_path = path.join(
-        _get_fixtures_base_path(),
-        "fixtures",
-        "trend/configuration.yaml",
-    )
+    yaml_path = get_fixture_path("configuration.yaml", "trend")
     with patch.object(hass_config, "YAML_CONFIG_FILE", yaml_path):
         await hass.services.async_call(
             DOMAIN,
@@ -415,5 +418,26 @@ async def test_reload(hass):
     assert hass.states.get("binary_sensor.second_test_trend_sensor")
 
 
-def _get_fixtures_base_path():
-    return path.dirname(path.dirname(path.dirname(__file__)))
+@pytest.mark.parametrize(
+    ("saved_state", "restored_state"),
+    [("on", "on"), ("off", "off"), ("unknown", "unknown")],
+)
+async def test_restore_state(
+    hass: HomeAssistant, saved_state: str, restored_state: str
+) -> None:
+    """Test we restore the trend state."""
+    mock_restore_cache(hass, (State("binary_sensor.test_trend_sensor", saved_state),))
+
+    assert await setup.async_setup_component(
+        hass,
+        "binary_sensor",
+        {
+            "binary_sensor": {
+                "platform": "trend",
+                "sensors": {"test_trend_sensor": {"entity_id": "sensor.test_state"}},
+            }
+        },
+    )
+    await hass.async_block_till_done()
+
+    assert hass.states.get("binary_sensor.test_trend_sensor").state == restored_state

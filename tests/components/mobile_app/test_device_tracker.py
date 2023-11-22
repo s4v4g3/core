@@ -1,7 +1,12 @@
 """Test mobile app device tracker."""
+from http import HTTPStatus
+
+from homeassistant.core import HomeAssistant
 
 
-async def test_sending_location(hass, create_registrations, webhook_client):
+async def test_sending_location(
+    hass: HomeAssistant, create_registrations, webhook_client
+) -> None:
     """Test sending a location via a webhook."""
     resp = await webhook_client.post(
         "/api/webhook/{}".format(create_registrations[1]["webhook_id"]),
@@ -20,7 +25,7 @@ async def test_sending_location(hass, create_registrations, webhook_client):
         },
     )
 
-    assert resp.status == 200
+    assert resp.status == HTTPStatus.OK
     await hass.async_block_till_done()
     state = hass.states.get("device_tracker.test_1_2")
     assert state is not None
@@ -48,11 +53,12 @@ async def test_sending_location(hass, create_registrations, webhook_client):
                 "course": 6,
                 "speed": 7,
                 "vertical_accuracy": 8,
+                "location_name": "",
             },
         },
     )
 
-    assert resp.status == 200
+    assert resp.status == HTTPStatus.OK
     await hass.async_block_till_done()
     state = hass.states.get("device_tracker.test_1_2")
     assert state is not None
@@ -68,7 +74,9 @@ async def test_sending_location(hass, create_registrations, webhook_client):
     assert state.attributes["vertical_accuracy"] == 8
 
 
-async def test_restoring_location(hass, create_registrations, webhook_client):
+async def test_restoring_location(
+    hass: HomeAssistant, create_registrations, webhook_client
+) -> None:
     """Test sending a location via a webhook."""
     resp = await webhook_client.post(
         "/api/webhook/{}".format(create_registrations[1]["webhook_id"]),
@@ -82,12 +90,11 @@ async def test_restoring_location(hass, create_registrations, webhook_client):
                 "course": 60,
                 "speed": 70,
                 "vertical_accuracy": 80,
-                "location_name": "bar",
             },
         },
     )
 
-    assert resp.status == 200
+    assert resp.status == HTTPStatus.OK
     await hass.async_block_till_done()
     state_1 = hass.states.get("device_tracker.test_1_2")
     assert state_1 is not None
@@ -104,6 +111,7 @@ async def test_restoring_location(hass, create_registrations, webhook_client):
 
     assert state_1 is not state_2
     assert state_2.name == "Test 1"
+    assert state_2.state == "not_home"
     assert state_2.attributes["source_type"] == "gps"
     assert state_2.attributes["latitude"] == 10
     assert state_2.attributes["longitude"] == 20
