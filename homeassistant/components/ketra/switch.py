@@ -1,10 +1,10 @@
-"""Ketra Scene Platform integration."""
+"""Ketra Switch Platform integration."""
 import logging
 from typing import Any
 
 from aioketraapi import ButtonChange, WebsocketV2Notification
 
-from homeassistant.components.scene import Scene
+from homeassistant.components.switch import SwitchEntity
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
@@ -18,56 +18,60 @@ _LOGGER = logging.getLogger(__name__)
 async def async_setup_entry(
     hass: HomeAssistant, entry: ConfigEntry, async_add_entities: AddEntitiesCallback
 ) -> None:
-    """Set up the Ketra scene platform via config entry."""
+    """Set up the Ketra switch platform via config entry."""
 
     plat_common = hass.data[DOMAIN][entry.unique_id]["common_platform"]
-    platform = KetraScenePlatform(async_add_entities, plat_common, _LOGGER)
+    platform = KetraSwitchPlatform(async_add_entities, plat_common, _LOGGER)
     await platform.setup_platform()
     _LOGGER.info("Platform init complete")
 
 
-class KetraScenePlatform(KetraPlatformBase):
-    """Ketra Scene Platform helper class."""
+class KetraSwitchPlatform(KetraPlatformBase):
+    """Ketra Switch Platform helper class."""
 
     def __init__(
         self, add_entities, platform_common: KetraPlatformCommon, logger: logging.Logger
     ) -> None:
-        """Initialize the scene platform class."""
+        """Initialize the switch platform class."""
         super().__init__(add_entities, platform_common, logger)
-        self.button_map: dict[str, KetraScene] = {}
+        self.button_map: dict[str, KetraSwitch] = {}
+        self.keypad_map: dict[str, list[KetraSwitch]] = {}
 
     async def setup_platform(self) -> None:
         """Perform platform setup."""
         self.logger.info("Beginning setup_platform()")
-        scenes = []
+        switches = []
         keypads = await self.hub.get_keypads()
         for keypad in keypads:
+            buttons = []
             for button in keypad.buttons:
-                scene = KetraScene(button)
-                scenes.append(scene)
-                self.button_map[button.id] = scene
-        self.add_entities(scenes)
-        self.logger.info("%d scenes added", len(scenes))
+                switch = KetraSwitch(button)
+                switches.append(switch)
+                self.button_map[button.id] = switch
+                buttons.append(switch)
+            self.keypad_map[keypad.id] = buttons
+        self.add_entities(switches)
+        self.logger.info("%d switches added", len(switches))
         self.platform_common.add_platform(self)
 
     async def reload_platform(self) -> None:
         """Reload the platform after a Design Studio Publish operation."""
-        new_scenes = []
-        current_scene_ids = []
+        new_switches = []
+        current_switch_ids = []
         keypads = await self.hub.get_keypads()
         for keypad in keypads:
             for button in keypad.buttons:
-                current_scene_ids.append(button.id)
+                current_switch_ids.append(button.id)
                 if button.id not in self.button_map:
-                    scene = KetraScene(button)
-                    new_scenes.append(scene)
-                    self.button_map[button.id] = scene
-        if len(new_scenes) > 0:
-            self.logger.info("%d new scenes added", len(new_scenes))
-            self.add_entities(new_scenes)
+                    switch = KetraSwitch(button)
+                    new_switches.append(switch)
+                    self.button_map[button.id] = switch
+        if len(new_switches) > 0:
+            self.logger.info("%d new switches added", len(new_switches))
+            self.add_entities(new_switches)
         for button_id in list(self.button_map.keys()):
-            if button_id not in current_scene_ids:
-                self.logger.info("Removing scene id '%s'", button_id)
+            if button_id not in current_switch_ids:
+                self.logger.info("Removing switch id '%s'", button_id)
                 await self.button_map.pop(button_id).async_remove()
 
     async def refresh_entity_state(self) -> None:
@@ -86,36 +90,39 @@ class KetraScenePlatform(KetraPlatformBase):
             button_id = notification_model.contents.button_id
             activated = notification_model.contents.activated
             if button_id in self.button_map:
+                await self.button_map[button_id].update_state(True)
+
                 self.logger.debug(
-                    "Scene button '%s' %s",
+                    "Keypad button '%s' %s",
                     self.button_map[button_id].name,
                     "activated" if activated else "deactivated",
                 )
-                event_data = {
-                    "button_id": button_id,
-                    "name": self.button_map[button_id].name,
-                    "keypad_name": self.button_map[button_id].keypad_name,
-                    "activated": activated,
-                }
-                self.logger.debug(
-                    "Firing ketra_button_press event with event data: %s",
-                    str(event_data),
-                )
-                self.platform_common.hass.bus.fire("ketra_button_press", event_data)
+                for button in self.keypad_map[self.button_map[button_id].keypad_id]:
+                    await button.update_state(False)
 
 
-class KetraScene(Scene):
-    """Representation of a Ketra scene."""
+class KetraSwitch(SwitchEntity):
+    """Representation of a Ketra keypad button."""
 
     def __init__(self, button):
-        """Initialize the scene entity from the Ketra button object."""
+        """Initialize the switch entity from the Ketra button object."""
         self._button = button
         self._name = button.scene_name
 
     @property
+    def keypad_id(self):
+        """Return the keypad id."""
+        return self._button.keypad.id
+
+    @property
     def name(self):
-        """Return the name of the scene."""
+        """Return the name of the switch."""
         return self._name
+
+    @property
+    def unique_id(self):
+        """Return a unique ID."""
+        return self._button.id
 
     @property
     def device_state_attributes(self):
@@ -127,15 +134,26 @@ class KetraScene(Scene):
         """Icon to use in the frontend."""
         return "mdi:lightbulb"
 
-    async def async_activate(self, **kwargs: Any) -> None:
-        """Activate the scene."""
+    @property
+    def is_on(self) -> bool:
+        """Return True if entity is on."""
+        return self._button.active != 0
+
+    async def async_turn_on(self, **kwargs: Any) -> None:
+        """Turn the entity on."""
         await self._button.activate()
 
-    @property
-    def keypad_name(self):
-        """Return the scene name."""
-        return self._button.keypad.name
+    async def async_turn_off(self, **kwargs: Any) -> None:
+        """Turn the entity off."""
+        await self._button.deactivate()
+
+    async def update_state(self, query_keypad):
+        """Update the state of the switch."""
+        if query_keypad:
+            await self._button.keypad.update_state()
+        self.schedule_update_ha_state(force_refresh=False)
 
     def update_button(self, button):
         """Update the button after a websocket reconnection."""
         self._button = button
+        self.schedule_update_ha_state(force_refresh=False)

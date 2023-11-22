@@ -2827,6 +2827,12 @@
       "config_flow": true,
       "iot_class": "local_push"
     },
+    "ketra": {
+      "name": "Ketra Lighting",
+      "integration_type": "hub",
+      "config_flow": true,
+      "iot_class": "local_push"
+    },
     "keyboard": {
       "name": "Keyboard",
       "integration_type": "hub",

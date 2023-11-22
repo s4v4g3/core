@@ -652,6 +652,8 @@ build.json @home-assistant/supervisor
 /homeassistant/components/kef/ @basnijholt
 /homeassistant/components/kegtron/ @Ernst79
 /tests/components/kegtron/ @Ernst79
+/homeassistant/components/ketra/ @s4v4g3
+/tests/components/ketra/ @s4v4g3
 /homeassistant/components/keyboard_remote/ @bendavid @lanrat
 /homeassistant/components/keymitt_ble/ @spycle
 /tests/components/keymitt_ble/ @spycle

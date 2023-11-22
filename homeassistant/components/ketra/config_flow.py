@@ -2,8 +2,8 @@
 
 import logging
 
-import aiohttp
 from aioketraapi.oauth import OAuthTokenResponse
+import httpx
 import voluptuous as vol
 
 from homeassistant import config_entries
@@ -94,7 +94,6 @@ class KetraConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         """Handle installation selection."""
 
         if user_input is None:
-            _LOGGER.info("Showing select installation form")
             data_schema = {
                 vol.Required("installation_id"): vol.In(
                     {**self.installation_id_to_title_dict}
@@ -119,35 +118,33 @@ class KetraConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         return self.async_create_entry(title=installation_name, data=config_data)
 
     async def _get_installations(self):
-        async with aiohttp.ClientSession() as session:
+        async with httpx.AsyncClient() as client:
             # first, get all installations to which the user has access.
-            async with session.get(
+            response = await client.get(
                 f"https://my.goketra.com/api/v4/locations.json?access_token={self.oauth_token}"
-            ) as response:
-                if response.status == 200:
-                    api_resp = await response.json()
-                    installations = api_resp["content"]
-                    # next, filter out all installations that don't correspond to a discovered hub
-                    async with session.get(
-                        "https://my.goketra.com/api/n4/v1/query"
-                    ) as response:
-                        if response.status == 200:
-                            api_resp = await response.json()
-                            local_installation_ids = [
-                                inst["installation_id"] for inst in api_resp["content"]
-                            ]
-                            return {
-                                inst["id"]: inst["title"]
-                                for inst in installations
-                                if inst["id"] in local_installation_ids
-                            }
-                        _LOGGER.warning(
-                            "Received status code %s when querying for hubs",
-                            str(response.status),
-                        )
-                else:
-                    _LOGGER.warning(
-                        "Received status code %s when querying for accessible installations",
-                        str(response.status),
-                    )
+            )
+            if response.status_code == 200:
+                api_resp = response.json()
+                installations = api_resp["content"]
+                # next, filter out all installations that don't correspond to a discovered hub
+                response = await client.get("https://my.goketra.com/api/n4/v1/query")
+                if response.status_code == 200:
+                    api_resp = response.json()
+                    local_installation_ids = [
+                        inst["installation_id"] for inst in api_resp["content"]
+                    ]
+                    return {
+                        inst["id"]: inst["title"]
+                        for inst in installations
+                        if inst["id"] in local_installation_ids
+                    }
+                _LOGGER.warning(
+                    "Received status code %s when querying for hubs",
+                    str(response.status_code),
+                )
+            else:
+                _LOGGER.warning(
+                    "Received status code %s when querying for accessible installations",
+                    str(response.status_code),
+                )
         return None

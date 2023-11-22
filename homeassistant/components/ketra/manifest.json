@@ -1,8 +1,9 @@
 {
-    "domain": "ketra",
-    "name": "Ketra Lighting",
-    "documentation": "https://www.home-assistant.io/integrations/ketra",
-    "codeowners": ["@s4v4g3"],
-    "config_flow": true,
-    "requirements": ["aioketraapi==0.1.9"]
-  }
+  "domain": "ketra",
+  "name": "Ketra Lighting",
+  "codeowners": ["@s4v4g3"],
+  "config_flow": true,
+  "documentation": "https://www.home-assistant.io/integrations/ketra",
+  "iot_class": "local_push",
+  "requirements": ["aioketraapi==0.1.12"]
+}

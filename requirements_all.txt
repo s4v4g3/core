@@ -279,7 +279,7 @@ aiokafka==0.7.2
 aiokef==0.2.16
 
 # homeassistant.components.ketra
-aioketraapi==0.1.9
+aioketraapi==0.1.12
 
 # homeassistant.components.lifx
 aiolifx-effects==0.3.2

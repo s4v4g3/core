@@ -5,21 +5,20 @@ from aioketraapi import GroupStateChange, LampState, WebsocketV2Notification
 
 from homeassistant.components.light import (
     ATTR_BRIGHTNESS,
-    ATTR_COLOR_TEMP,
+    ATTR_COLOR_TEMP_KELVIN,
     ATTR_HS_COLOR,
     ATTR_RGB_COLOR,
+    ATTR_RGBW_COLOR,
     ATTR_TRANSITION,
-    ATTR_WHITE_VALUE,
+    ATTR_WHITE,
     ATTR_XY_COLOR,
-    SUPPORT_BRIGHTNESS,
-    SUPPORT_COLOR,
-    SUPPORT_COLOR_TEMP,
-    SUPPORT_TRANSITION,
-    SUPPORT_WHITE_VALUE,
+    ColorMode,
     LightEntity,
+    LightEntityFeature,
 )
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.helpers.typing import HomeAssistantType
+from homeassistant.core import HomeAssistant
+from homeassistant.helpers.entity_platform import AddEntitiesCallback
 import homeassistant.util.color as color_util
 
 from . import KetraPlatformBase, KetraPlatformCommon
@@ -29,7 +28,7 @@ _LOGGER = logging.getLogger(__name__)
 
 
 async def async_setup_entry(
-    hass: HomeAssistantType, entry: ConfigEntry, async_add_entities
+    hass: HomeAssistant, entry: ConfigEntry, async_add_entities: AddEntitiesCallback
 ) -> None:
     """Set up the Ketra light platform via config entry."""
 
@@ -44,10 +43,10 @@ class KetraLightPlatform(KetraPlatformBase):
 
     def __init__(
         self, add_entities, platform_common: KetraPlatformCommon, logger: logging.Logger
-    ):
+    ) -> None:
         """Initialize the light platform class."""
         super().__init__(add_entities, platform_common, logger)
-        self.group_map = {}
+        self.group_map: dict[str, KetraGroup] = {}
 
     async def setup_platform(self) -> None:
         """Perform platform setup."""
@@ -58,7 +57,7 @@ class KetraLightPlatform(KetraPlatformBase):
             groups.append(group_entity)
             self.group_map[group.id] = group_entity
         self.add_entities(groups)
-        self.logger.info(f"{len(groups)} light groups added")
+        self.logger.info("%d light groups added", len(groups))
         self.platform_common.add_platform(self)
 
     async def reload_platform(self) -> None:
@@ -72,13 +71,13 @@ class KetraLightPlatform(KetraPlatformBase):
                 group_entity = KetraGroup(group)
                 new_groups.append(group_entity)
                 self.group_map[group.id] = group_entity
-        if len(new_groups) > 0:
-            self.logger.info(f"{len(new_groups)} new lights added")
-        self.add_entities(new_groups)
         for group_id in list(self.group_map.keys()):
             if group_id not in current_groups_ids:
-                self.logger.info(f"Removing group id '{group_id}'")
+                self.logger.info("Removing group id '%s'", group_id)
                 await self.group_map.pop(group_id).async_remove()
+        if len(new_groups) > 0:
+            self.logger.info("%d new lights added", len(new_groups))
+            self.add_entities(new_groups)
 
     async def refresh_entity_state(self) -> None:
         """Refresh the state of all entities."""
@@ -97,8 +96,6 @@ class KetraLightPlatform(KetraPlatformBase):
             if len(changed_groups) > 4:
                 # get all groups in one shot instead of one at a time
                 all_groups = await self.hub.get_groups()
-                group_names = [group.name for group in all_groups]
-                self.logger.debug(f"Groups {' & '.join(group_names)} changed")
                 for group in all_groups:
                     if group.id in self.group_map and group.id in changed_groups:
                         self.group_map[group.id].update_state(group)
@@ -106,7 +103,7 @@ class KetraLightPlatform(KetraPlatformBase):
                 for group_id in changed_groups:
                     if group_id in self.group_map:
                         self.logger.debug(
-                            f"Group {self.group_map[group_id].name} changed"
+                            "Group %s changed", self.group_map[group_id].name
                         )
                         self.group_map[group_id].update_state()
 
@@ -116,13 +113,14 @@ class KetraGroup(LightEntity):
 
     def __init__(self, group):
         """Initialize the light entity from the Ketra Group object."""
-        self._supported_features = (
-            SUPPORT_BRIGHTNESS
-            | SUPPORT_COLOR
-            | SUPPORT_COLOR_TEMP
-            | SUPPORT_TRANSITION
-            | SUPPORT_WHITE_VALUE
-        )
+        self._attr_supported_color_modes: set[ColorMode | str] = set()
+        self._attr_supported_color_modes.add(ColorMode.XY)
+        self._attr_supported_color_modes.add(ColorMode.COLOR_TEMP)
+        self._attr_supported_color_modes.add(ColorMode.HS)
+        self._attr_supported_color_modes.add(ColorMode.RGB)
+        self._attr_supported_color_modes.add(ColorMode.RGBW)
+        self._attr_supported_color_modes.add(ColorMode.WHITE)
+        self._attr_supported_features = LightEntityFeature.TRANSITION
         self._group = group
         self._lamp_state = group.state
 
@@ -132,8 +130,7 @@ class KetraGroup(LightEntity):
         self.schedule_update_ha_state(force_refresh=False)
 
     def update_state(self, updated_group=None):
-        """
-        Update the state of the entity.
+        """Update the state of the entity.
 
         Called by KetraLightPlatform in response to a websocket callback indicating a change to a light group.
         Adopts the state of updated_group if it is provided, and calls schedule_update_ha_state to trigger
@@ -146,17 +143,11 @@ class KetraGroup(LightEntity):
 
     @property
     def should_poll(self):
-        """
-        Return whether hass should poll the state of the entity.
+        """Return whether hass should poll the state of the entity.
 
         The state will updated through the websocket connection to the hub, thus polling is disabled.
         """
         return False
-
-    @property
-    def supported_features(self):
-        """Flag supported features."""
-        return self._supported_features
 
     @property
     def unique_id(self):
@@ -181,31 +172,31 @@ class KetraGroup(LightEntity):
         return self._lamp_state.brightness * 255
 
     @property
-    def color_temp(self):
-        """Return the CT color value in mireds."""
+    def color_temp_kelvin(self):
+        """Return the CT color value in kelvin."""
         cct = self._lamp_state.cct
         if cct == 0 or cct is None:
             return None
-        return 1000000 / cct
+        return cct
 
     @property
-    def state_attributes(self):
-        """Return state attributes."""
-        if not self.is_on:
-            return None
+    def color_temp(self):
+        """Return the CT color value in mireds."""
+        cct = self.color_temp_kelvin
+        return 1000000 / cct if cct else None
 
-        data = {}
-        data[ATTR_BRIGHTNESS] = self.brightness
-        data[ATTR_COLOR_TEMP] = self.color_temp
-        data[ATTR_XY_COLOR] = (
+    @property
+    def xy_color(self):
+        """Return the XY color value."""
+        return (
             self._lamp_state.x_chromaticity,
             self._lamp_state.y_chromaticity,
         )
-        data[ATTR_HS_COLOR] = color_util.color_xy_to_hs(*data[ATTR_XY_COLOR])
-        data[ATTR_RGB_COLOR] = color_util.color_xy_to_RGB(*data[ATTR_XY_COLOR])
-        data[ATTR_WHITE_VALUE] = self.white_value
 
-        return {key: val for key, val in data.items() if val is not None}
+    @property
+    def color_mode(self) -> ColorMode:
+        """Return the color mode of the light."""
+        return ColorMode.COLOR_TEMP if self.color_temp_kelvin else ColorMode.XY
 
     @property
     def min_mireds(self):
@@ -218,9 +209,18 @@ class KetraGroup(LightEntity):
         return 1000000 / 1100
 
     @property
+    def min_color_temp_kelvin(self) -> int:
+        """Return the warmest color_temp_kelvin that this light supports."""
+        return 1100
+
+    @property
+    def max_color_temp_kelvin(self) -> int:
+        """Return the coldest color_temp_kelvin that this light supports."""
+        return 10000
+
+    @property
     def white_value(self):
-        """
-        Return the white value of this light between 0..255.
+        """Return the white value of this light between 0..255.
 
         This corresponds inversely to the Ketra Vibrancy property which is in the range from 0..1.
         """
@@ -234,23 +234,36 @@ class KetraGroup(LightEntity):
         return self._lamp_state.power_on
 
     async def __async_set_lamp_state(self, power_state: bool, **kwargs):
+        """Set the state of the light."""
         lamp_state = LampState(power_on=power_state)
         if ATTR_TRANSITION in kwargs:
             lamp_state.transition_time = int(kwargs[ATTR_TRANSITION] * 1000)
 
-        if ATTR_HS_COLOR in kwargs:
+        if ATTR_XY_COLOR in kwargs:
+            lamp_state.x_chromaticity = kwargs[ATTR_XY_COLOR][0]
+            lamp_state.y_chromaticity = kwargs[ATTR_XY_COLOR][1]
+        elif ATTR_RGB_COLOR in kwargs:
+            xy_color = color_util.color_RGB_to_xy(*kwargs[ATTR_RGB_COLOR])
+            lamp_state.x_chromaticity = xy_color[0]
+            lamp_state.y_chromaticity = xy_color[1]
+        elif ATTR_RGBW_COLOR in kwargs:
+            xy_color = color_util.color_RGB_to_xy(*kwargs[ATTR_RGBW_COLOR][:3])
+            lamp_state.x_chromaticity = xy_color[0]
+            lamp_state.y_chromaticity = xy_color[1]
+            lamp_state.vibrancy = 1 - (kwargs[ATTR_RGBW_COLOR][-1] / 255.0)
+        elif ATTR_HS_COLOR in kwargs:
             xy_color = color_util.color_hs_to_xy(*kwargs[ATTR_HS_COLOR])
             lamp_state.x_chromaticity = xy_color[0]
             lamp_state.y_chromaticity = xy_color[1]
-        elif ATTR_COLOR_TEMP in kwargs:
-            temp = kwargs[ATTR_COLOR_TEMP]
-            lamp_state.cct = 1000000 / temp
+        elif ATTR_COLOR_TEMP_KELVIN in kwargs:
+            temp = kwargs[ATTR_COLOR_TEMP_KELVIN]
+            lamp_state.cct = temp
 
         if ATTR_BRIGHTNESS in kwargs:
             lamp_state.brightness = kwargs[ATTR_BRIGHTNESS] / 255.0
 
-        if ATTR_WHITE_VALUE in kwargs:
-            lamp_state.vibrancy = 1 - (kwargs[ATTR_WHITE_VALUE] / 255.0)
+        if ATTR_WHITE in kwargs:
+            lamp_state.vibrancy = 1 - (kwargs[ATTR_WHITE] / 255.0)
 
         await self._group.set_state(lamp_state)
         self._lamp_state = self._group.state
@@ -258,10 +271,12 @@ class KetraGroup(LightEntity):
 
     async def async_turn_on(self, **kwargs):
         """Instruct the light to turn on."""
+        _LOGGER.debug("async_turn_on called for %s", self.name)
         await self.__async_set_lamp_state(True, **kwargs)
 
     async def async_turn_off(self, **kwargs):
         """Instruct the light to turn off."""
+        _LOGGER.debug("async_turn_off called for %s", self.name)
         await self.__async_set_lamp_state(False, **kwargs)
 
     async def async_update(self):
