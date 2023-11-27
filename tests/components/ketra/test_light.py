@@ -1,9 +1,11 @@
 """Tests for the Ketra Light platform."""
 
+from unittest.mock import patch
+
 import pytest
 
 from homeassistant.components.ketra import DOMAIN as KETRA_DOMAIN
-from homeassistant.components.light import DOMAIN as LIGHT_DOMAIN
+from homeassistant.components.light import DOMAIN as LIGHT_DOMAIN, LightEntityFeature
 from homeassistant.const import (
     ATTR_ENTITY_ID,
     ATTR_FRIENDLY_NAME,
@@ -15,8 +17,6 @@ from homeassistant.const import (
 )
 
 from .common import LIGHT_GROUP_ENTITY_ID, MockHub, setup_platform
-
-from tests.async_mock import patch
 
 
 @pytest.fixture(name="platform_common")
@@ -41,7 +41,9 @@ async def test_light_platform_creation(hass, platform_common):
     assert len(platform_common.platforms) == 1
     state = hass.states.get(f"{LIGHT_DOMAIN}.{LIGHT_GROUP_ENTITY_ID}")
     assert state.attributes.get(ATTR_FRIENDLY_NAME) == LIGHT_GROUP_ENTITY_ID
-    assert state.attributes.get(ATTR_SUPPORTED_FEATURES) == 179
+    assert (
+        state.attributes.get(ATTR_SUPPORTED_FEATURES) == LightEntityFeature.TRANSITION
+    )
 
 
 async def test_light_turn_on(hass, platform_common):

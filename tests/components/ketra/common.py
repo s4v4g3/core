@@ -1,6 +1,7 @@
 """Test helpers for the Ketra Light platform."""
 
 import asyncio
+from unittest.mock import AsyncMock, Mock
 
 from aioketraapi.models import LampState
 
@@ -8,7 +9,6 @@ from homeassistant.components.ketra import DOMAIN as KETRA_DOMAIN
 from homeassistant.const import CONF_ACCESS_TOKEN
 from homeassistant.setup import async_setup_component
 
-from tests.async_mock import AsyncMock, Mock
 from tests.common import MockConfigEntry
 
 SCENE_ENTITY_ID = "ketra_scene_name"

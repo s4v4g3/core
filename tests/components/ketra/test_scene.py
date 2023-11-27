@@ -1,6 +1,7 @@
 """Tests for the Ketra Scene platform."""
 
 import logging
+from unittest.mock import patch
 
 from aioketraapi.models import ButtonChange, ButtonChangeNotification, HubReady
 import pytest
@@ -11,8 +12,6 @@ from homeassistant.const import ATTR_ENTITY_ID, ATTR_FRIENDLY_NAME, SERVICE_TURN
 from homeassistant.helpers.entity_platform import async_get_platforms
 
 from .common import SCENE_ENTITY_ID, MockHub, setup_platform
-
-from tests.async_mock import patch
 
 _LOGGER = logging.getLogger(__name__)
 
