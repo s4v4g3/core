@@ -26,6 +26,8 @@ from .const import DOMAIN
 
 _LOGGER = logging.getLogger(__name__)
 
+BULK_GROUP_UPDATE_THRESHOLD = 4
+
 
 async def async_setup_entry(
     hass: HomeAssistant, entry: ConfigEntry, async_add_entities: AddEntitiesCallback
@@ -93,7 +95,7 @@ class KetraLightPlatform(KetraPlatformBase):
 
         if isinstance(notification_model, GroupStateChange):
             changed_groups = notification_model.group_ids
-            if len(changed_groups) > 4:
+            if len(changed_groups) > BULK_GROUP_UPDATE_THRESHOLD:
                 # get all groups in one shot instead of one at a time
                 all_groups = await self.hub.get_groups()
                 for group in all_groups:
@@ -157,7 +159,9 @@ class KetraGroup(LightEntity):
     @property
     def device_id(self):
         """Return the ID of this light."""
-        return self._group.id
+
+        # seems like this may be a deprecated property
+        return self._group.id  # pragma: nocover
 
     @property
     def name(self):

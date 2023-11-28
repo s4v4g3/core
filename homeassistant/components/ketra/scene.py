@@ -118,11 +118,6 @@ class KetraScene(Scene):
         return self._name
 
     @property
-    def device_state_attributes(self):
-        """Return the state attributes."""
-        return {}
-
-    @property
     def icon(self):
         """Icon to use in the frontend."""
         return "mdi:lightbulb"

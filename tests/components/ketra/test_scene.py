@@ -1,45 +1,32 @@
 """Tests for the Ketra Scene platform."""
 
 import logging
-from unittest.mock import patch
+from typing import cast
 
-from aioketraapi.models import ButtonChange, ButtonChangeNotification, HubReady
+from aioketraapi.models import (
+    ButtonChange,
+    ButtonChangeNotification,
+    HubReady,
+    WebsocketV2Notification,
+)
 import pytest
 
 from homeassistant.components.ketra import DOMAIN as KETRA_DOMAIN
 from homeassistant.components.scene import DOMAIN as SCENE_DOMAIN
 from homeassistant.const import ATTR_ENTITY_ID, ATTR_FRIENDLY_NAME, SERVICE_TURN_ON
+from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import async_get_platforms
 
-from .common import SCENE_ENTITY_ID, MockHub, setup_platform
+from .common import SCENE_ENTITY_ID, MockHub
 
 _LOGGER = logging.getLogger(__name__)
 
-
-@pytest.fixture(name="config_entry")
-async def setup_config_entry(hass):
-    """Set up config entry."""
-    hub = MockHub()
-
-    async def patched_get_hub(*args, **kwargs):
-        return hub
-
-    with patch("aioketraapi.n4_hub.N4Hub.get_hub", new=patched_get_hub), patch(
-        "homeassistant.components.ketra.KETRA_PLATFORMS", ["scene"]
-    ), patch("homeassistant.components.ketra.WEBSOCKET_RECONNECT_DELAY", 0.1):
-        entry = await setup_platform(hass)
-        yield entry
+pytestmark = pytest.mark.parametrize("config_entry", ["scene"], indirect=True)
 
 
-@pytest.fixture(name="platform_common")
-async def setup_scene_platform(hass, config_entry):
-    """Set up platform."""
-    cmn_plat = hass.data[KETRA_DOMAIN][config_entry.unique_id]["common_platform"]
-    yield cmn_plat
-    await cmn_plat.shutdown()
-
-
-async def test_scene_platform_creation(hass, config_entry, platform_common):
+async def test_scene_platform_creation(
+    hass: HomeAssistant, config_entry, platform_common
+):
     """Test platform creation."""
     assert len(platform_common.platforms) == 1
     entries = hass.config_entries.async_entries(KETRA_DOMAIN)
@@ -51,7 +38,7 @@ async def test_scene_platform_creation(hass, config_entry, platform_common):
     assert len(scene_platform.entities) == 1
 
 
-async def test_scene_entity_refresh(hass, platform_common):
+async def test_scene_entity_refresh(hass: HomeAssistant, platform_common):
     """Test platform refresh."""
     await platform_common.platforms[0].refresh_entity_state()
     assert len(platform_common.platforms[0].button_map) == 1
@@ -62,7 +49,7 @@ async def test_scene_entity_refresh(hass, platform_common):
     assert len(scene_platform.entities) == 1
 
 
-async def test_scene_reload_platform(hass, platform_common):
+async def test_scene_reload_platform(hass: HomeAssistant, platform_common):
     """Test platform reload."""
     platform_common.hub.add_keypad_button()
     await platform_common.platforms[0].reload_platform()
@@ -73,11 +60,16 @@ async def test_scene_reload_platform(hass, platform_common):
     assert len(scene_platform.entities) == 2
 
 
-async def test_scene_reload_platform_via_hubready(hass, platform_common):
+async def test_scene_reload_platform_via_hubready(
+    hass: HomeAssistant, platform_common, mock_hub
+):
     """Test platform reload."""
     platform_common.hub.add_keypad_button()
-    await platform_common.platforms[0].websocket_notification(
-        HubReady(notification_type="HubReady", time_utc="now")
+    await mock_hub.websocket_notification(
+        cast(
+            WebsocketV2Notification,
+            HubReady(notification_type="HubReady", time_utc="now"),
+        )
     )
     assert len(platform_common.platforms[0].button_map) == 2
     await hass.async_block_till_done()
@@ -85,7 +77,7 @@ async def test_scene_reload_platform_via_hubready(hass, platform_common):
     assert len(scene_platform.entities) == 2
 
 
-async def test_scene_removed(hass, platform_common):
+async def test_scene_removed(hass: HomeAssistant, platform_common):
     """Test platform reload."""
     platform_common.hub.remove_keypad_buttons()
     await platform_common.platforms[0].reload_platform()
@@ -97,7 +89,7 @@ async def test_scene_removed(hass, platform_common):
     assert len(scene_platform.entities) == 0
 
 
-async def test_scene_activation(hass, platform_common):
+async def test_scene_activation(hass: HomeAssistant, platform_common):
     """Test scene activation."""
     await hass.services.async_call(
         SCENE_DOMAIN,
@@ -109,7 +101,9 @@ async def test_scene_activation(hass, platform_common):
     platform_common.hub.button.activate.assert_called_once()
 
 
-async def test_scene_websocket_button_change_notification(hass, platform_common):
+async def test_scene_websocket_button_change_notification(
+    hass: HomeAssistant, platform_common, mock_hub: MockHub
+):
     """Test scene notification."""
     notifications = []
 
@@ -124,7 +118,7 @@ async def test_scene_websocket_button_change_notification(hass, platform_common)
         time_utc="now",
         contents=ButtonChangeNotification(button_id="12345", activated=True),
     )
-    await platform_common.platforms[0].websocket_notification(btn_change)
+    await mock_hub.websocket_notification(cast(WebsocketV2Notification, btn_change))
     await hass.async_block_till_done()
     assert len(notifications) == 1
     assert notifications[0].event_type == "ketra_button_press"
@@ -135,7 +129,7 @@ async def test_scene_websocket_button_change_notification(hass, platform_common)
 
 
 async def test_scene_websocket_button_change_invalid_notification(
-    hass, platform_common
+    hass: HomeAssistant, platform_common, mock_hub: MockHub
 ):
     """Test invalid scene notification."""
     notifications = []
@@ -150,6 +144,6 @@ async def test_scene_websocket_button_change_invalid_notification(
         time_utc="now",
         contents=ButtonChangeNotification(button_id="123456", activated=True),
     )
-    await platform_common.platforms[0].websocket_notification(btn_change)
+    await mock_hub.websocket_notification(cast(WebsocketV2Notification, btn_change))
     await hass.async_block_till_done()
     assert len(notifications) == 0
