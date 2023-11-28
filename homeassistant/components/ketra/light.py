@@ -171,9 +171,7 @@ class KetraGroup(LightEntity):
     @property
     def brightness(self):
         """Return the brightness of the light."""
-        if not self.is_on:
-            return None
-        return self._lamp_state.brightness * 255
+        return self._lamp_state.brightness * 255 if self.is_on else None
 
     @property
     def color_temp_kelvin(self):
@@ -182,12 +180,6 @@ class KetraGroup(LightEntity):
         if cct == 0 or cct is None:
             return None
         return cct
-
-    @property
-    def color_temp(self):
-        """Return the CT color value in mireds."""
-        cct = self.color_temp_kelvin
-        return 1000000 / cct if cct else None
 
     @property
     def xy_color(self):
@@ -203,16 +195,6 @@ class KetraGroup(LightEntity):
         return ColorMode.COLOR_TEMP if self.color_temp_kelvin else ColorMode.XY
 
     @property
-    def min_mireds(self):
-        """Return the coldest color_temp that this light supports."""
-        return 1000000 / 10000
-
-    @property
-    def max_mireds(self):
-        """Return the warmest color_temp that this light supports."""
-        return 1000000 / 1100
-
-    @property
     def min_color_temp_kelvin(self) -> int:
         """Return the warmest color_temp_kelvin that this light supports."""
         return 1100
@@ -221,16 +203,6 @@ class KetraGroup(LightEntity):
     def max_color_temp_kelvin(self) -> int:
         """Return the coldest color_temp_kelvin that this light supports."""
         return 10000
-
-    @property
-    def white_value(self):
-        """Return the white value of this light between 0..255.
-
-        This corresponds inversely to the Ketra Vibrancy property which is in the range from 0..1.
-        """
-        vibrancy = self._lamp_state.vibrancy
-        white_level = 1.0 - vibrancy
-        return white_level * 255
 
     @property
     def is_on(self):

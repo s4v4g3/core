@@ -201,3 +201,111 @@ async def test_light_turn_off(hass: HomeAssistant, platform_common):
     assert not platform_common.hub.group.state.power_on
     state = hass.states.get(f"{LIGHT_DOMAIN}.{LIGHT_GROUP_ENTITY_ID}")
     assert state.state == STATE_OFF
+
+
+@pytest.mark.parametrize(
+    ("attributes", "expected_state"),
+    (
+        (
+            {"hs_color": [240, 100], "brightness": 255},
+            {
+                "power_on": True,
+                "brightness": 1.0,
+                "x_chromaticity": 0.136,
+                "y_chromaticity": 0.04,
+            },
+        ),
+        (
+            {"hs_color": [240, 100], "brightness": 255, "transition": 1.0},
+            {
+                "power_on": True,
+                "brightness": 1.0,
+                "x_chromaticity": 0.136,
+                "y_chromaticity": 0.04,
+                "transition_time": 1000,
+            },
+        ),
+        (
+            {"xy_color": [0.136, 0.04], "brightness": 255, "transition": 1.0},
+            {
+                "power_on": True,
+                "brightness": 1.0,
+                "x_chromaticity": 0.136,
+                "y_chromaticity": 0.04,
+                "transition_time": 1000,
+            },
+        ),
+        (
+            {"rgb_color": [1, 1, 1], "brightness": 255, "transition": 1.0},
+            {
+                "power_on": True,
+                "brightness": 1.0,
+                "x_chromaticity": 0.323,
+                "y_chromaticity": 0.329,
+                "transition_time": 1000,
+            },
+        ),
+        (
+            {"rgbw_color": [1, 1, 1, 127], "brightness": 255, "transition": 1.0},
+            {
+                "power_on": True,
+                "brightness": 1.0,
+                "x_chromaticity": 0.323,
+                "y_chromaticity": 0.329,
+                "transition_time": 1000,
+                "vibrancy": 1 - (127 / 255.0),
+            },
+        ),
+        (
+            {
+                "brightness": 255,
+                "transition": 1.0,
+                "white": 127,
+            },
+            {
+                "power_on": True,
+                "brightness": 1.0,
+                "transition_time": 1000,
+                "vibrancy": 0,
+            },
+        ),
+        (
+            {
+                "brightness": 255,
+                "transition": 1.0,
+                "color_temp_kelvin": 3000,
+            },
+            {
+                "power_on": True,
+                "brightness": 1.0,
+                "transition_time": 1000,
+                "cct": 3000,
+            },
+        ),
+    ),
+)
+async def test_service_turn_on(
+    hass: HomeAssistant,
+    platform_common,
+    attributes,
+    expected_state,
+):
+    """Test turning on light to various states."""
+    await hass.services.async_call(
+        LIGHT_DOMAIN,
+        SERVICE_TURN_ON,
+        {
+            ATTR_ENTITY_ID: f"{LIGHT_DOMAIN}.{LIGHT_GROUP_ENTITY_ID}",
+            **attributes,
+        },
+        blocking=True,
+    )
+    await hass.async_block_till_done()
+    for state_attribute in expected_state:
+        assert (
+            getattr(platform_common.hub.group.state, state_attribute)
+            == expected_state[state_attribute]
+        )
+
+    state = hass.states.get(f"{LIGHT_DOMAIN}.{LIGHT_GROUP_ENTITY_ID}")
+    assert state.state == STATE_ON
